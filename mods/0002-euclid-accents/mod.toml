@@ -1,0 +1,63 @@
+[mod]
+id      = "0002-euclid-accents"
+title   = "Euclidean generator places accents instead of trigs"
+
+# Designed, not built. See design.md for what is established and what is still open.
+enabled = true
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+# 0001 is retracted and 0002 needs the whole cave pool. They can never be in
+# one image, so a collision between these two is not a bug.
+excludes = ["0001-microtiming-fine"]
+
+# Behaviour and control surface are both confirmed on hardware. Persistence was
+# broken in stock's pattern converters and is fixed by two detours; the fix is
+# built but not yet tested on hardware - see design.md.
+
+summary = """
+Per track, make the euclidean generator colour the pattern's own trigs with ACCENT
+rather than decide which steps fire. The grid says when, euclid says what is accented.
+
+The setting rides on the existing Bool Operator parameter, whose range goes from
+4 (OR, XOR, AND, SUB) to 8 - the same four operators, each with an accent variant -
+so it is per track, saved, and visible on the page it belongs to with no new gesture.
+
+Live behaviour, the FUNC-held bake and the plain revert are all preserved.
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# 1 = storage and display only; 2 adds the trig_fire and euclid_bake behaviour.
+phase = 2
+
+# 1 = draw the accent artwork in the four reachable slots as well, to prove
+# whether this icon set is the one on screen. Answered yes; keep at 0.
+diag_icons = 0
+
+# 1 = rewrite every word in Bool Operator's parameter record that looks like a
+# max of 3 into 7, to find out whether the encoder range lives in that record at
+# all. A probe, not a fix.
+probe_range = 0
+
+# 1 = make boolop_get_ui always answer 2, to find out whether it is on the
+# parameter page's value path at all. Answered yes; keep at 0.
+diag_get = 0
+
+[requires]
+symbols = [
+  "trig_fire",
+  "euclid_generate",
+  "euclid_bake",
+  "euclid_enabled",
+  "euclid_step_map",
+  "euclid_bool_op_get",
+  "euclid_bool_op_set",
+  "euclid_bool_op_labels",
+  "euclid_bool_op_format",
+  "TRIG_BIT_ACCENT",
+  "TRIG_BIT_TRIG",
+]

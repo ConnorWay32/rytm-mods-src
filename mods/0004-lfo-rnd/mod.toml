@@ -1,0 +1,64 @@
+[mod]
+id      = "0004-lfo-rnd"
+title   = "Two per-sound random modifiers on a second LFO page"
+
+enabled = true
+
+# re-only | built | hardware-verified | retracted
+status  = "built"
+
+summary = """
+A second LFO page, LFO RND, reached by pressing the LFO page key again. It holds
+two random modifiers per sound, each a destination (DS1/DS2, one of 16) above a
+depth (DP1/DP2, 0..64 in 16 steps). A destination shows its parameter's short name
+in place of a dial and opens stock's LFO DST list, restricted to the sixteen, as LFO
+DST does; a depth is a selector, its sixteen settings on evenly spaced positions
+across the knob's travel. The four
+settings are packed into the sound's free parameter word at sound index 0, so they
+travel with the sound.
+
+On every note trig of a voice track, each modifier draws a random offset of up
+to +-N for its destination, clamped to the parameter's range, and holds it until
+the next note. It adds on top of p-locks, slides and LFO 1.
+
+phase = 1 builds the page, editing, dial, popup and storage only; phase = 2 (the
+default) adds the trig_fire and audio-interrupt hooks that apply the modifiers.
+Outstanding work is listed in design.md.
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# 1 = page, editing, dial, popup and storage only. 2 adds the trig_fire and audio
+# hooks that apply the modifiers. Both phases have run on hardware.
+phase = 2
+# 1 = DS1/DS2 open stock's LFO DST list, restricted to the sixteen, on the left of
+# the screen, committing on YES. On hardware 2026-09-20. 0 drops the four detours and
+# the two modflag patches that route the knobs there; the knob still shows the
+# destination's name either way.
+dest_list = 1
+
+[requires]
+shared = true
+symbols = [
+  "page_info_resume",
+  "page_get_value_body",
+  "param_apply_delta_track",
+  "param_value_text_args",
+  "sound_param_id_for_index",
+  "std_string_from_cstr",
+  "ui_set_title",
+  "std_string_dtor",
+  "page_cycle_after_invalidate",
+  "trig_fire_cfg_resume",
+  "lfo_block",
+  "lfo_call_resume",
+  "param_knob_draw_body",
+  "param_set_value_body",
+  "param_container_index",
+  "dest_list_build",
+  "dest_list_build_resume",
+  "param_set_read_body",
+  "lfo_dst_knob_draw",
+]

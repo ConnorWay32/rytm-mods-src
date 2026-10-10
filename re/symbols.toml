@@ -1,0 +1,1642 @@
+# Analog Rytm MKII symbol map.
+#
+# Addresses are virtual (load base 0x40000400); file_offset = addr - 0x40000400.
+# status = "verified"  established by decompilation/disassembly of this exact image
+#          "inferred"  reasoned from surrounding evidence, NOT directly proven
+#          "external"  taken from a reference repo, not re-derived here
+# Consumed by tools/symbols.py -> build/symbols.inc (assembler) and a Ghidra annotator.
+#
+# Nothing here yet. Unlike the Octatrack, this image is a C++ build with its
+# Itanium-ABI symbol names left in, so most of the map can be recovered by
+# demangling rather than by guessing - see re/subsystems/README.md.
+
+[meta]
+target        = "OS1.73"
+base          = 0x40000400
+mainos_size   = 3005432
+mainos_sha256 = "28d9ef40c895e03f17dfce096543109adaf708947392db72818fc2a412d685d6"
+
+# The bootstrap ships in the same container (section 2, load base 0x07020000) and is
+# also ColdFire. It is READ-ONLY here: it is the recovery path that survives a bad
+# MAIN OS, and nothing in this project writes to it. See docs/HAZARDS.md.
+bootstrap_size   = 42302
+bootstrap_sha256 = "1b8d3b7288df118512740ac7c59d8dd9f71f44e6633a29628bcb068d756e2ed8"
+bootstrap_base   = 0x07020000
+
+# ----------------------------------------------------------------- microtiming
+# See mods/0001-microtiming-fine/design.md. The site that turns the stored value
+# into a time offset is NOT here yet - it has not been found.
+
+[fn.Pattern_getMicrotiming]
+addr = 0x400c02dc
+sig = "int8(Pattern *this, int step)"
+status = "verified"
+note = "Clamps step to 0..63, virtual-calls vtable[10] for the pattern storage pointer, reads the signed byte at +0x140+step and returns it plus 64. Every caller sign-extends the low byte and subtracts 64, so the bias cancels. All four callers are UI: 0x4004512a (menu), 0x400a8a66 (step-attribute dispatch), 0x400c8a40 (differs-from-on-grid test), and 0x400452a2."
+
+[data.microtiming_label_table]
+addr = 0x401cd86c
+status = "verified"
+note = "24 pointers, index n -> the display string for n/384 reduced. Index 0 is \"ON GRID\". Sign is applied separately by the \"-%s\"/\"+%s\" formats at 0x40240155/0x40240159. Two entries point into another menu's strings (1/64, 1/32) and several are suffixes of longer strings in the same block, so the table is the authority, not string order."
+
+[data.microtiming_clamp_lo]
+addr = 0x40045136
+status = "verified"
+note = "moveq #-23,%d0 - the low clamp in the microtiming menu's change path, immediately after `addil #-64,%d2` un-biases the getter's result."
+
+[data.microtiming_clamp_hi]
+addr = 0x40045146
+status = "verified"
+note = "moveq #23,%d7 - the high clamp, same routine."
+
+[data.microtiming_pack_site]
+addr = 0x40008e90
+status = "verified"
+note = "Packs the microtiming byte into a 6-bit two's-complement field: lsl #6 / moveb (320,%a4),%d1 / and #63 / add / moveb %d0,(304,%a5). This is why the stored range cannot be widened past [-32,+31] without changing a serialisation format."
+
+[const.MICROTIMING_MAX]
+value = 23
+status = "verified"
+note = "Full-scale microtiming, in units of 1/384 of a whole note = 1/24 of a 1/16 step."
+
+[fn.trig_fire]
+addr = 0x4009a9bc
+sig = "void(int track, int ctx, int step, int slot)"
+status = "verified"
+note = "Builds and dispatches one trig. Reads the per-step arrays at +0x80 note, +0xc0 velocity, +0x100 length, +0x140 microtiming, each 64 bytes, with -1 meaning \"use the track default\" at +0x2c0/+0x2c1/+0x2c2. Computes the microtiming offset for this trig and for the next one, and the gap between them as (next - this) / 6. Handles both the audio tracks and the slot==-1 case from one body."
+
+[data.microtiming_scale_shift]
+addr = 0x4009ace8
+status = "verified"
+note = "moveq #9,%d4 - the shift that builds the microtiming scale factor: scale = ((0x7f - amount) * 0x10205 >> 16) << d4, which is 0x10000 (unity) when amount is 0. The offset is then (scale * step_unit * micro) >> 16. d4 is dead two instructions later, overwritten by the mvsb at 0x4009acfa, so this shift is the ONLY consumer and changing it scales microtiming and nothing else. Mod 0001 sets it to 7."
+
+[data.microtiming_unit_mul]
+addr = 0x4009acfe
+status = "verified"
+note = "mulsw #25,%d0 - one microtiming unit is 25 engine ticks. The only `mulsw #25` in the image. Its sibling constant is the 600-tick step at 0x4009adaa (local_28 * cVar10 * 600), so a step is 24 microtiming units exactly."
+
+[const.MICROTIMING_UNIT_TICKS]
+value = 25
+status = "verified"
+note = "Engine ticks per microtiming unit. Step = 600 ticks, so the engine runs at 600 ticks per 1/16 = 2400 PPQN, 25x finer than the 1/384-note microtiming grid. That headroom is what makes mod 0001 possible."
+
+[const.STEP_TICKS]
+value = 600
+status = "verified"
+note = "Engine ticks in one sequencer step, before the per-step scale factor from the table at 0x401db44b is applied."
+
+# --------------------------------------------------- microtiming UI and keys
+# Groundwork from the page-nudge investigation that was dropped once stock's
+# own gesture turned out to cover it. See re/subsystems/microtiming.md.
+
+[fn.Pattern_setMicrotiming]
+addr = 0x400c0878
+sig = "void(Pattern *this, int step, char biased)"
+status = "verified"
+note = "Clamps step to 0..63, ignores steps past the pattern length, un-biases the argument by 0x40, clamps to [-23,+23], writes the byte at +0x140+step, then raises a change notification through vtable[4] carrying the step. The only supported way to write microtiming - it owns the clamp."
+
+[fn.microtiming_change]
+addr = 0x40045232
+sig = "void(MicroTimingMenuView *this, int delta, char all)"
+status = "verified"
+note = "all == 0 schedules a per-trig change for the held trig. all != 0 walks step 0..patternLength-1 on the CURRENT TRACK, and for every step with a trig does setMicrotiming(step, get(step) + delta), bracketed by vtable[0x3c](1,1) / vtable[0x3c](0,0) and a closing vtable[0x10](0). That batch-and-notify bracket is the pattern to copy for any bulk trig edit."
+
+[fn.microtiming_menu_keys]
+addr = 0x40045328
+sig = "char(MicroTimingMenuView *this, KeyEvent *ev)"
+status = "verified"
+note = "Slot 2 of the vtable at 0x401cd8f4. Handles key codes 0x40/0x41 (LEFT/RIGHT) as delta -1/+1, passing event flag bit 1 as the `all` argument. Gated on trig_keys_held, so it does nothing unless a TRIG key is down."
+
+[fn.microtiming_menu_draw]
+addr = 0x40044ef4
+sig = "void(MicroTimingMenuView *this, Canvas *c)"
+status = "verified"
+note = "Slot 4. Titles the view MICRO TIME ALL when is_key_held(KEY_FUNC), MICRO TIMING otherwise, and draws the ruler and the label from microtiming_label_table. Also gated on trig_keys_held."
+
+[fn.trig_keys_held]
+addr = 0x400367c6
+sig = "int(void *this)"
+status = "verified"
+note = "Non-zero if any TRIG key is currently held within the pattern length. Builds a (1 << len) - 1 mask and ANDs it against the 64-bit held-trig bitmap at this+0x158 / this+0x15c. This is the gate that makes the whole microtiming view trig-modal: with no trig down it neither draws nor takes arrows."
+
+[fn.is_key_held]
+addr = 0x40081bbc
+sig = "uint(int keyId)"
+status = "verified"
+note = "Maps keyId through the RAM table at 0x418d0be0 to a bit index, then tests that bit in the key-state bitmap at 0x418d1340. A negative table entry means the key is absent and reads as not held. The RAM table is the inverse of the ROM list key_scan_ids, built at startup by 0x400824ce, so the numbering is recoverable from the image."
+
+[fn.pattern_track]
+addr = 0x400ab232
+sig = "TrackPattern *(Pattern *this, int track)"
+status = "verified"
+note = "Clamps track to 0..12 and returns this + 0x70 + track * 0x60. Thirteen slots - twelve voices plus the FX track - each with its own trigs and its own 64-byte microtiming array. This is why stock's MICRO TIME ALL is per track and not pattern-wide."
+
+[fn.current_track_pattern]
+addr = 0x400af076
+sig = "TrackPattern *(Project *this)"
+status = "verified"
+note = "The selected track's block of the active pattern: pattern_track(activePattern(this), currentTrack(this)). What every microtiming entry point operates on."
+
+[fn.pattern_length]
+addr = 0x400c04b8
+sig = "int(TrackPattern *this)"
+status = "verified"
+note = "Step count. Bounds the all-trigs loop, bounds setMicrotiming's write, and sets the mask width in trig_keys_held."
+
+[fn.pattern_step_has_trig]
+addr = 0x400bff12
+sig = "char(TrackPattern *this, int step)"
+status = "inferred"
+note = "Read only from its use in microtiming_change's all-trigs loop, where steps failing this test are skipped. Consistent with `step has a trig`, but it could equally be a broader `step is active` - not confirmed against a second call site."
+
+[data.pattern_grid_view_vtable]
+addr = 0x401cc67c
+status = "verified"
+note = "PatternGridView. Slot 2 is the key handler, slot 4 the draw - same layout as the microtiming view's vtable at 0x401cd8f4. MicroTimingMenuView is constructed as a member of PatternGridView by its constructor at 0x4003b2e0."
+
+[fn.pattern_grid_view_keys]
+addr = 0x4003cc94
+status = "inferred"
+note = "Slot 2 of pattern_grid_view_vtable, so by position the grid view's key handler. Read out of the table, NOT yet disassembled. This is where a gesture that must work with no trig held would have to hook, since microtiming_menu_keys never runs in that state."
+
+[const.KEY_LEFT]
+value = 0x40
+status = "verified"
+note = "Key code, from microtiming_menu_keys testing `code - 0x40 < 2` and deriving delta -1 for 0x40."
+
+[const.KEY_RIGHT]
+value = 0x41
+status = "verified"
+
+[const.KEY_FUNC]
+value = 0x80
+status = "verified"
+note = "Both the key code seen by handlers and the id passed to is_key_held - 24 call sites, by far the most of any id, as befits the global modifier."
+
+[const.KEY_TRK]
+value = 0x86
+status = "verified"
+note = "TRK, from TrackSelectionView's key handler: releasing 0x86 closes the view (its vtable +0x2c), while it is up a pad selects that track and key 0x10 selects track 12. Also tested with is_key_held at 0x400c7b72 and in AnalogControlView (0x40125fd2). Confirmed on hardware by mod 0014, which gates on is_key_held(0x86)."
+
+[data.key_scan_ids]
+addr = 0x40285670
+status = "verified"
+note = "ROM list of key ids in scan order, 88 longs then -1. 0x400824ce fills the RAM table at 0x418d0be0 with its inverse (id -> scan bit) for is_key_held; unlisted ids stay -1. Groups: 0x00-0x0f the trig keys, 0x90-0x9b the pads, 0x30-0x35 the six page keys, 0x40-0x43 the arrows, 0x80 FUNC, 0x86 TRK; 0x87 is filler."
+
+# ------------------------------------------------------- audio engine boundary
+# See re/subsystems/audio-engine.md. image = "hardware" keeps these out of both
+# generated outputs; they are documentation of a boundary, not patch targets.
+
+[data.fpga_reg_base]
+addr  = 0xec094000
+image = "hardware"
+status = "inferred"
+note = "Base of the byte-wide register file MAIN OS drives, 0xec094000..0xec09406e, 57 distinct addresses. Called FPGA by position only - it is the external chip-select window and the bootstrap's self-test names FPGA as a device - not by reading a part number. A second, sparser block sits at 0xec070000/0xec074000 on a 4-byte stride."
+
+[data.fpga_status_reg]
+addr  = 0xec094018
+image = "hardware"
+status = "verified"
+note = "One of only three addresses in the whole window that MAIN OS ever reads. Its sole reader, fpga_status_bit5, returns bit 5 and nothing else. The other two reads are 0xec09401d and 0xec090014, each read exactly once. Everything else in the window is write-only - this interface carries no telemetry."
+
+[fn.fpga_status_bit5]
+addr = 0x4000076a
+sig = "byte(void)"
+status = "verified"
+note = "`return DAT_ec094018 & 0x20;` - the entire function. Quoted in the subsystem note as the evidence that the audio side reports nothing useful back."
+
+# ------------------------------------------------------- euclidean + trig flags
+
+[fn.euclid_generate]
+addr = 0x400c1998
+sig = "void(TrackPattern *this, char notify)"
+status = "verified"
+note = "The euclidean generator. Returns immediately unless euclid_enabled_get says 1. Runs two Bjorklund passes - counter = (pulses * rotation) % len; per step hit = counter < pulses, counter = (counter + pulses) % len - into 64-byte bool arrays at 0x4196dbb8 (gen 1) and 0x4196db78 (gen 2), combines them through one of four std::function operators selected per track, then fills the step map. Lazily constructs the four combiners on first use, guarded by DAT_4196dc04."
+
+[data.euclid_enabled]
+addr = 0x000002ca
+image = "hardware"
+status = "verified"
+note = "Offset, not an address: per-track byte at TrackPattern+0x2ca, 1 = euclidean mode on. Read by euclid_generate via its getter at 0x400c0e02 and directly by trig_fire at 0x4009aaca."
+
+[data.euclid_step_map]
+addr = 0x000002d1
+image = "hardware"
+status = "verified"
+note = "Offset, not an address: per-track 64-byte array at TrackPattern+0x2d1. Per step, -1 means no euclidean trig; otherwise the ORDINAL of that trig (0,1,2,...). trig_fire uses the ordinal as a step index to fetch note/velocity/length, so the euclidean pattern picks WHEN and the grid's own trigs supply WHAT. Accessors at 0x400c1242 (get) and 0x400c128a (set); the only playback reader is trig_fire, at 0x4009aaf0 and 0x4009ad80."
+
+[fn.trig_flags_set]
+addr = 0x400c2416
+sig = "void(TrackPattern *this, int step, ushort mask, char on)"
+status = "verified"
+note = "Generic read-modify-write on a step's 16-bit trig word (array of 64 words at TrackPattern+0x00). Clamps the step, refuses past the pattern length, and brackets the change with vtable[0x3c](1,1). Setting bit 0 also forces 0x200 when neither 0x80 nor 0x100 is set."
+
+[const.TRIG_BIT_TRIG]
+value = 0x0001
+status = "verified"
+note = "Step has a trig. trig_fire forces this bit on for euclidean steps."
+
+[const.TRIG_BIT_LOCK]
+value = 0x0004
+status = "inferred"
+note = "Set means trig_fire bails out before producing a note - consistent with a lock/trigless trig. Named from behaviour, not from a UI string."
+
+[const.TRIG_BIT_ACCENT]
+value = 0x0008
+status = "verified"
+note = "Identified from the caller of its setter, FUN_40042330, which references the strings ACCENT and CLEAR ACCENT."
+
+[const.TRIG_BIT_SWING]
+value = 0x0010
+status = "verified"
+note = "Setter called from FUN_400675d2, adjacent to the swing menu code at 0x40067700. Matches trig_fire, where this bit gates the swing term."
+
+[const.TRIG_BIT_SLIDE]
+value = 0x0020
+status = "verified"
+note = "Setter called from FUN_4004ea7e, which references PARAMETER SLIDE / CLEAR PARAM SLIDE. Matches trig_fire, where this bit triggers the forward scan for the next trig - slide needs its target."
+
+[fn.euclid_bake]
+addr = 0x400c3c0e
+sig = "void(TrackPattern *this)"
+status = "verified"
+note = "The FREEZE TRACK path. Called from the euclid toggle handler at 0x400d1c10 only when isKeyHeld(KEY_FUNC). Walks steps BACKWARDS from len-1: map[step] < 0 clears the trig and its note/velocity/length; otherwise every attribute is copied from the ordinal step onto this step. Backwards because the ordinal is always <= the step, so descending never overwrites a source before it is read. Toggling euclid off without FUNC does nothing, because live euclidean never writes to the pattern."
+
+[fn.euclid_toggle_handler]
+addr = 0x400d1c10
+sig = "int(View *this, KeyEvent *ev)"
+status = "verified"
+note = "On the euclid key with FUNC held and euclid on, shows FREEZE TRACK, calls euclid_bake then clears euclid_enabled. Otherwise falls through to the stock handler at 0x40039f3c."
+
+[fn.euclid_bool_op_get]
+addr = 0x400c11b0
+sig = "byte(TrackPattern *this)"
+status = "verified"
+note = "Returns TrackPattern+0x2d0 raw. euclid_generate uses it as an index into a 4-entry, 0x40-byte combiner array, so it must keep returning 0..3 - this is why mod 0002 does not widen the stored value."
+
+[fn.euclid_bool_op_set]
+addr = 0x400c11e0
+sig = "void(TrackPattern *this, int value)"
+status = "verified"
+note = "Clamps to 0..3 and writes TrackPattern+0x2d0."
+
+[fn.euclid_bool_op_format]
+addr = 0x400ff3da
+status = "verified"
+note = "Renders the Bool Operator value: takes arg >> 8, clamps to 0..3 (moveq #3 at 0x400ff3e0 and 0x400ff3ea), indexes euclid_bool_op_labels, tail-calls the formatter at 0x40163254."
+
+[data.euclid_bool_op_labels]
+addr = 0x401ec400
+status = "verified"
+note = "Exactly four pointers: OR, XOR, AND, SUB. Referenced once, from euclid_bool_op_format. Immediately followed by an unrelated table (attack-time labels), so it cannot be extended in place."
+
+[data.euclid_bool_op]
+addr  = 0x000002d0
+image = "hardware"
+status = "verified"
+note = "Offset, not an address: per-track byte at TrackPattern+0x2d0, the Bool Operator, 0..3. Saved via the copy at 0x40008d56 / 0x40008f5e. The six euclidean parameters occupy +0x2cb..+0x2d0 - PL1, PL2, RO1, RO2, TRO and this - each with a save/load copy pair into the storage struct at +0x27a..+0x27f, so there is NO free byte in that run."
+
+[data.trig_fire_euclid_flag_load]
+addr = 0x4009aaca
+status = "verified"
+note = "moveb %a0@(714),%d0 in trig_fire - a0 is the track base from the lea at 0x4009aac4. The result becomes (enabled == 1) and is stashed at %sp@(44); the beqs at 0x4009aaec sends a zero down the ordinary grid path with d3 = step. seq sets the flag only when raw ^ 1 is zero, so an accent track carrying raw == 3 takes the grid path. Mod 0002 detours here to mask raw to bits 0..1 first, so bits 2..5 used by other mods do not turn euclid off."
+
+[data.trig_fire_grid_flags_load]
+addr = 0x4009ab72
+status = "verified"
+note = "mvzw %a2@(0,%d0:l),%d2 - the non-euclidean arm loading the step's trig word, with d0 = a3 + step*2 and d3 = step. Six bytes to the euclid arm's label including the following bras, so a jmp fits. d0 is dead straight after, reassigned from d2 at 0x4009ab8c where the paths converge. Mod 0002's second detour site."
+
+[data.param_get_boolop_arm]
+addr = 0x400a884c
+status = "verified"
+note = "The get-by-id switch arm for Bool Operator: jsr euclid_bool_op_get, then mvsb and lsll #8, so parameter values travel in the high byte of a word - which is what euclid_bool_op_format's arg >> 8 undoes. Repointing the jsr target is a 4-byte patch at +2."
+
+[data.param_set_boolop_arm]
+addr = 0x400a9caa
+status = "verified"
+note = "The set-by-id switch arm for Bool Operator: jsr euclid_bool_op_set. euclid_bool_op_set has no other callers, and euclid_bool_op_get's only other caller is euclid_generate, which needs it to keep returning 0..3 - so the composite 0..7 value is produced and consumed here, on the UI path only."
+
+[fn.euclid_step_map_get]
+addr = 0x400c1242
+sig = "int8(TrackPattern *this, int step)"
+status = "verified"
+note = "Clamps the step to 0..63 and returns the euclid step map byte, or -1 when there is no storage. Negative means no euclidean hit at that step."
+
+[data.trig_fire_flags_join]
+addr = 0x4009ab8c
+status = "verified"
+note = "Where trig_fire's euclidean and grid arms converge: movel %d2,%d0 with d2 holding the assembled flags word. Mod 0002's accent detour jumps here after re-emitting the grid arm's load."
+
+[data.euclid_bake_body]
+addr = 0x400c3c16
+status = "verified"
+note = "euclid_bake past its prologue - lea %sp@(-120),%sp then moveml %d2-%d7/%a2-%fp,%sp@. Mod 0002 detours the entry, re-emits both and jumps here for the stock path. moveal %sp@(124),%a2 here expects the argument at sp+124, which is where the lea leaves it."
+
+# ------------------------------------------------- parameter rendering, bitmaps
+
+[fn.bitmap_ctor]
+addr = 0x4006f9c2
+sig = "void(Bitmap *dest, int w, int h, void *pixels, void *mask)"
+status = "verified"
+note = "Bitmap objects are 28 bytes; the drawer reads width at +4 and height at +8. Pixel format is COLUMN-MAJOR, one 32-bit big-endian word per column. The rows are the TOP h bits of each word with the LOWEST of them the top row: for h = 12, bit 20 is row 0 and bit 31 row 11 (0002, hardware: a mark at bit 20 drew above the glyph). A 17x12 icon is therefore 68 bytes."
+
+[fn.bitmap_set_make]
+addr = 0x401b7cd0
+sig = "void(BitmapSet *set, Bitmap *first, int count, void *)"
+status = "verified"
+note = "Called at 0x40143124 with count = 4 to build the Bool Operator icon set at 0x419f23c4 from four Bitmap objects on the stack. Repointing that one jsr is the hook for extending the set to eight."
+
+[data.boolop_icon_set]
+addr = 0x419f23c4
+image = "hardware"
+status = "verified"
+note = "RAM. The four Bool Operator icons - logic-gate glyphs: OR, XOR (double input line), AND (flat input side) and the SUB glyph. Pixel data at 0x402becd8 / 0x402bed1c / 0x402bed60 / 0x402beda4, 0x44 apart, sharing the full-height mask at 0x402bec94 (0xfff00000 per column). All 17x12."
+
+[fn.boolop_icon_draw]
+addr = 0x400ff472
+sig = "void(Canvas *, int value8, int, int, int)"
+status = "verified"
+note = "The renderer the euclidean page actually uses for Bool Operator: takes value >> 8, clamps to 0..3 at 0x400ff476 and 0x400ff492, fetches that icon from boolop_icon_set and centres it. NOT euclid_bool_op_format - that text formatter belongs to a different std::function slot (0x419a42d0) and never reaches this page. Mod 0002's label-table patch is consequently inert."
+
+[fn.bitmap_draw]
+addr = 0x40071674
+sig = "void(Canvas *, Bitmap *, int x, int y, int, int centred)"
+status = "verified"
+note = "Draws a Bitmap. With the last argument set, x and y are the centre: half the width (+4) and height (+8) are subtracted first. filter_type_knob_draw tail-calls it with 1."
+
+[data.filter_type_icon_set]
+addr = 0x419f1b38
+status = "verified"
+note = "RAM. The FILTER page's TYP glyphs: a BitmapSet, begin at +0, end at +4, 28-byte Bitmaps. Built at 0x40146a66 by bitmap_set_make with count 8 from eight 21x13 Bitmaps (bitmap_ctor, w 0x15, h 0xd) with pixel data at filter_type_icon_pixels + 0x54 * k, sharing the mask at 0x402b214c (0xfff80000 per column, 13 rows). In order LP2, LP1, BP, HP1, HP2, BS, PK - the labels of filter_type_labels - and a blank eighth. Not checked on the device."
+
+[data.filter_type_icon_pixels]
+addr = 0x402b21a0
+status = "verified"
+note = "ROM. The eight TYP glyphs' pixel data, 21 columns of one long each, 0x54 apart, 13 rows in bits 19..31, bit 19 the top row (bitmap_ctor). So read, the seven match the label order: LP2 flat at the top left and falling steeply, LP1 falling gently, BP a peak, HP1 and HP2 rising, BS a notch, PK a bump. The device's FILTER page shows LP2's glyph so (screenshot, 2026-09-29)."
+
+[fn.filter_type_knob_draw]
+addr = 0x400ff0a6
+status = "verified"
+note = "TYP's (id 49) knob draw callback: the invoker of the std::function set into its RAM record's +0x24 at 0x401a91d4 (manager 0x400fe84c at +0x2c, invoker at +0x30), in place of the dial template 0x419a4618. Called as (functor, value, x, y, h, 1). Takes value >> 8, clamps it to 0 .. count - 1 of filter_type_icon_set (count from its begin/end, / 28 by the multiply 0xb6db6db7 after >> 2), and tail-calls bitmap_draw with that Bitmap, x, y and centred = 1. So the knob shows the type's glyph and no dial."
+
+[fn.filter_type_text]
+addr = 0x400ff1a2
+status = "verified"
+note = "TYP's popup formatter, the invoker at its RAM record's +0x20: value >> 8 clamped to 0..6, \"%s\" (0x402410a4) of filter_type_labels, through 0x40098602."
+
+[data.sound_config_changed_info_vt]
+addr = 0x401cb5dc
+status = "verified"
+note = "SoundConfigChangedInfo's vtable (typeinfo name at 0x401cb37c's). The change notice stock's sound settings setters send after writing the live sound's settings bytes - ENV RESET's (0x400bcee4, +0x6c) and those at 0x400bc6f0..0x400bce82 (+0x69, +0x6a, +0x6b), 18 sites in all - as an 8-byte object {this vtable, byte 1}, through the track's sound accessor's vtable +16. The parameter bank's drain does not carry bytes outside the 42 parameters; a live-sound write without this notice is lost at a reboot unless the kit is saved (0013, hardware, 2026-09-29)."
+
+[fn.sound_page_draw]
+addr = 0x400d2e1a
+sig = "void(SoundPageView *, Canvas *)"
+status = "verified"
+note = "SoundPageView (vtable 0x401e32c4) +0x10, the draw of the LFO/FILTER/AMP pages. Draws the knobs (0x40039782), then asks the view's page id (vtable +104). On page 6, FILTER: clears a panel (0x400706ba), draws the envelope graph with filter_env_graph_draw from ATK DEC SUS REL (ids 50..53) and the response graph with filter_graph_draw from FRQ RES TYP (ids 47..49), each value read through 0x400398a4 and clamped to its record's range, and leaves through 0x400d329c. Other pages branch at 0x400d3134. The only caller of either graph drawer, so a page of our own gets neither unless it calls them."
+
+[fn.filter_env_graph_draw]
+addr = 0x400389b0
+sig = "void(SoundPageView *, Canvas *, int, int, int, int atk, int dec, int sus, int rel)"
+status = "verified"
+note = "The FILTER page's envelope graph, called by sound_page_draw as (view, canvas, 6, 0, 0, ATK, DEC, SUS, REL), values in 8.8."
+
+[fn.filter_graph_draw]
+addr = 0x40038db6
+sig = "void(SoundPageView *, Canvas *, int x, int col, int row, int frq, int res, int typ)"
+status = "verified"
+note = "The FILTER page's response graph, called by sound_page_draw as (view, canvas, 6, 0, 1, FRQ, RES, TYP), values in 8.8. A 52 x 12 box at x + 26 * col, 18 - 22 * row, cleared first: on the device (screenshot, 2026-09-29) it sits in the bottom row over the FRQ and RES knobs, whose dials it covers, their labels showing below it; the envelope graph likewise spans the top row over ATK..REL. TYP >> 8 above 6 returns without drawing; 0..6 switch (table at 0x40038e42) to a schematic shape per type - a polyline, not a computed response - with the knee at 52 * FRQ >> 15 px and a resonance bump scaled from RES. Drawn with the line routine 0x4006ffc0 into a 128x64 Bitmap made once at 0x417e3254 (guard 0x417e32cc), then blitted with bitmap_draw. Taking only values, it can draw any FRQ/TYP pair, not only the sound's."
+
+[data.filter_type_labels]
+addr = 0x401ec3e4
+status = "verified"
+note = "Seven string pointers, TYP's values in order: LP2, LP1, BP, HP1, HP2, BS, PK: the order of sound index 32's value, which 0x401ef188 maps to the analog filter's 3-bit code (re/subsystems/analog-controls.md)."
+
+[fn.param_info]
+addr = 0x400ff556
+sig = "void *(uint id)"
+status = "verified"
+note = "Returns 0x419a4888 + id * 0x54, clamped to id < 0x1d5. An 84-byte record per parameter, built in RAM at startup. Flags are read at +0x2c and +0x4c. The encoder's value range is believed to live in this record but the field has NOT been identified - that is what still blocks extending Bool Operator past SUB."
+
+[data.param_table_rom]
+addr = 0x401bf940
+status = "verified"
+note = "The master parameter table: 469 records of 0x34 bytes, indexed by global parameter id. Record 0 is the placeholder 'Error'; the count matches param_info's clamp of id < 0x1d5 exactly. Fields: +0x00 flags (bit 0x10000 tested by param_edit_handler), +0x04 long name, +0x08 page/group name, +0x0c short name as shown on the parameter grid, +0x10 group id (0x3d = Euclidean), +0x14 index within the group, then numeric fields whose meaning is NOT established. In particular the half-word at +0x28 is NOT a MIDI CC number: for the compressor's seven parameters it reads 0x4f..0x55, a plausible-looking range, but the manual's MIDI chart gives 78..85 in a different order. Checked against hardware; the guess was wrong for every one."
+
+[const.PARAM_ID_BOOL_OP]
+value = 467
+status = "verified"
+note = "Bool Operator's global parameter id, from its record at 0x401c581c: (0x401c581c - 0x401bf940) / 0x34 = 467. Neighbours are Track Rotation 466 and Track Length 468, and 468 is the last of the 469 records - a clean cross-check. Its short name is \"OP\"."
+
+[fn.param_minmax]
+addr = 0x400a8f34
+sig = "int(uint id, char which)"
+status = "verified"
+note = "Returns the RAM record's +4 when `which` is 0 and +8 otherwise - a min/max pair. It is NOT the encoder's clamp: its only caller, 0x400d297c, uses it for parameter 0x29 alone. The encoder's clamp is behind vtable[0x2c] of the object returned by vtable[0xa0], reached through FUN_400378a6, and has not been located."
+
+[fn.param_edit_handler]
+addr = 0x40039f3c
+sig = "char(ParamPageView *this, KeyEvent *ev)"
+status = "verified"
+note = "The parameter page's encoder handler, and what euclid_toggle_handler falls through to. Loads min from param_info(id)+4 and max from +8, both 8.8 fixed point, and passes them to the encoder helper at 0x4006ef5e - the same helper euclid_toggle_handler calls with (1, 8). A nearby special case, `if (max == 0x800) max = 0x700`, is what establishes the fixed-point scale."
+
+[data.param_edit_resume]
+addr = 0x4003a048
+status = "verified"
+note = "Where mod 0002's range detour rejoins, after the displaced max load and lea."
+
+[const.PARAM_INFO_BASE]
+value = 0x419a4888
+status = "verified"
+note = "Base of the 84-byte-per-parameter RAM records; param_info returns this + id * 0x54."
+
+[data.param_info_resume]
+addr = 0x400ff560
+status = "verified"
+note = "param_info at the scs that consumes the id-range compare. Mod 0002's probe rejoins here, having re-emitted both displaced instructions adjacently so the compare's flags are intact."
+
+# ------------------------------------------- the euclidean page's value path
+# Confirmed on hardware: forcing boolop_get_ui to answer 2 pinned the icon to
+# AND regardless of the encoder, so the composite accessors ARE on this path and
+# the ceiling at SUB is a genuine clamp.
+
+[data.params_seq_note_view_vtable]
+addr = 0x401e2e98
+status = "verified"
+note = "ParametersSeqNoteView - the euclidean page. Base found from its typeinfo at 0x401e2e94, NOT by assuming the key handler sits at slot 2: here euclid_toggle_handler is at +0x48. Earlier slot arithmetic in this project assumed +0x08 and was wrong by 0x40 throughout, which is why vtable[0x58] appeared to be an eleven-argument drawing routine."
+
+[fn.param_apply_delta]
+addr = 0x400378a6
+sig = "void(View *this, uint id, int delta, char funcHeld, char *outFlag)"
+status = "verified"
+note = "vtable[0x58] of the page. Resolves the current track, gets the set with page_param_set(view, -1) - the selected track's - and calls param_set_apply_delta(set, id, delta, track, funcHeld, outFlag). Shared by ParameterPageView, CompressorPageView, FxPageView, ParametersSeqNoteView, SamplePageView, SoundPageView and SynthPageView, all with the same vtable +0xa0 and +0x68."
+
+[data.param_apply_delta_dispatch]
+addr = 0x400378c2
+status = "verified"
+note = "param_apply_delta after the track lookup, where 0013's hpf_delta rejoins: d0 the selected track, a2 the view, d3 funcHeld zero-extended, the lookup's argument still pushed, so %sp@(24) is the id, %sp@(28) the delta, %sp@(36) outFlag. `moveal %a2@,%a0; pea -1` are exactly six bytes; mod 0014 detours here."
+
+[data.param_apply_delta_dispatch_resume]
+addr = 0x400378c8
+status = "verified"
+note = "param_apply_delta past `moveal %a2@,%a0; pea -1`, where mod 0014 rejoins."
+
+[fn.page_param_set]
+addr = 0x400378fa
+sig = "ParameterSet *(View *this, int track)"
+status = "verified"
+note = "Page view vtable +0xa0. A track above 12 (so -1) means the selected one. Returns param_target_for_track(view+104, track, vtable[0x68](view)), the page's kind being a RAM table entry indexed by the view's page. So every track's set is reachable from any page view."
+
+[fn.param_set_apply_delta]
+addr = 0x400a95dc
+sig = "void(ParameterSet *set, int id, int delta, int track, char funcHeld, char *outFlag)"
+status = "verified"
+note = "Vtable +0x2c of all four set classes. Reads the value with the set's +0x28, which takes no track, computes the new one through +0x20 (or, with funcHeld and a callback at param_info(id)+0x50, through that callback) and tail-calls param_set_value(set, id, new, track, 1, 1)."
+
+[fn.kit_param_set]
+addr = 0x400a6422
+sig = "ParameterSet *(Kit *this, int track)"
+status = "verified"
+note = "param_target_for_track's branch for kinds other than 1 and 2. Tracks 0..11 give the SoundParameterSet at kit + 0x10e0 + track * 28; 12 gives the FxParameterSet at kit + 0x1274."
+
+[fn.sound_set_write]
+addr = 0x400a9f9e
+sig = "void(SoundParameterSet *set, int id, int value, int track, char)"
+status = "verified"
+note = "SoundParameterSet vtable +0x70, the write param_set_value makes. Ignores its track argument: passes the set's own +8 to vtable +0x30, then posts the change (0x40181982, 0x40078514). The set, not the argument, decides the track. Ids 43 and 44 are special-cased after a test at 0x400fabc0, not followed."
+
+[data.track_selection_view_vtable]
+addr = 0x401e36f0
+status = "verified"
+note = "TrackSelectionView, up while TRK is held. Key handler +0x08 is 0x400d4d40: pads select a track through 0x400d4b34 (-> 0x400b7d4e on the project's track selection), key 0x10 selects track 12, release of 0x86 closes the view, and every other key - the encoders included - goes to the base handler 0x400783ce, which declines it, so the page below still gets knob turns (confirmed on hardware)."
+
+[fn.param_target_for_track]
+addr = 0x400af4ae
+sig = "void *(Project *this, int track, int kind)"
+status = "verified"
+note = "Clamps the track to 0..12. For kind 1 or 2 returns pattern_track(activePattern, track) + 0x30, the TrigParameterSet the TrackPattern constructor builds there with the track in its +8 (0x400c2be8). For any other kind tail-jumps to kit_param_set(project + 352, track)."
+
+[fn.project_singleton]
+addr = 0x4017f83e
+sig = "Project *(void)"
+status = "verified"
+note = "Lazily constructs and returns the project object. Every parameter accessor starts here, via current_track_pattern."
+
+[data.param_apply_delta_resume]
+addr = 0x400378ae
+status = "verified"
+note = "param_apply_delta past its displaced prologue - lea %sp@(-12),%sp then moveml %d2-%d3/%a2,%sp@."
+
+[fn.param_value_text]
+addr = 0x400a85e0
+sig = "void(void *obj, uint id, int value, void *arg)"
+status = "verified"
+note = "Renders a parameter's value as text for the transient popup. Asks obj->vtable[0x24] to do it and, when that returns false, overwrites the first two argument slots with (arg, \"ERR\") and tail-calls param_text_format. That bounds check - not euclid_bool_op_format - is what showed ERR for Bool Operator values above 3."
+
+[data.param_value_text_resume]
+addr = 0x400a85e8
+status = "verified"
+note = "param_value_text past its displaced prologue."
+
+[data.param_value_text_invoke]
+addr = 0x400a8648
+status = "verified"
+note = "param_value_text once obj->vtable[0x24] has accepted the value: `lea %a2@(20),%a0; movel %d3,%sp@(32)` begin the tail call into the record's text formatter, the std::function at RAM record +0x14 (invoker at +0x20), as (functor, value, buffer). d4 is the id, d2 the value in 8.8, d3 the output char buffer, a2 the record. Filter FRQ (id 47) gets its formatter from the template at 0x419a4818, whose invoker 0x400fb454 prints \"%d\" of value >> 8 - shared with RES and many others. Mod 0008 detours here."
+
+[data.param_value_text_invoke_resume]
+addr = 0x400a8650
+status = "verified"
+note = "param_value_text_invoke past the two displaced instructions, at `movel %d2,%sp@(28)`."
+
+[fn.param_text_format]
+addr = 0x40163254
+status = "verified"
+note = "The formatter param_value_text tail-calls, taking (arg, string) in the first two argument slots."
+
+[data.audio_dsp_region]
+addr = 0x40100000
+status = "inferred"
+note = "Roughly 0x40100000..0x4011ffff holds the bulk of MAIN OS's EMAC use - 600 macl and 303 msacl across the image, concentrated here in block loops that process 32 samples at a time out of SRAM at 0x8000xxxx. Audio DSP therefore runs on the ColdFire, not on the FPGA. The extent is approximate; the loop at 0x4010d7e0 is a confirmed example."
+
+[data.audio_dsp_block_example]
+addr = 0x4010d7e0
+status = "verified"
+note = "A representative block loop: loads state and coefficients from 0x8000cc3c / 0x8000ccfc / 0x8000ccdc, sets a 32-iteration counter, runs macl with post-increment operands and stores through %a1@+. Which effect it implements is not established."
+
+[data.fpga_idcode]
+addr  = 0x02218093
+image = "hardware"
+status = "verified"
+note = "Read from the FPGA bitstream's write to configuration register 0x0E (IDCODE). Confirmed by Xilinx UG332 v1.7 Table 12-4: revision 0, family 0x22 = Spartan-3A, array 0x18 = XC3S200A, vendor suffix 0x093. Tables 1-5/17-1 also exactly match the image's 540 device frames of 138 16-bit words plus one trailing pad frame."
+
+# ------------------------------------------------------------------------ LFO
+# See re/subsystems/lfo.md. Investigation only - nothing patched, no mod claims it.
+
+[data.param_record_base]
+addr = 0x401bf918
+status = "verified"
+note = "The parameter record base the CODE actually uses: 19 sites `lea 0x401bf918,%aN` (0x40006d34, 0x40006f24, 0x400a8fa0, ...), stride 0x34. NOTE: [data.param_table_rom] above gives 0x401bf940, which is +0x28 into each record (the long-name field), so its field offsets are all shifted by one word. This entry is the corrected frame. Record 467 cross-checks: 0x401bf918 + 0x34*467 + 0x28 = 0x401c581c holds \"Bool Operator\"/\"Euclidean\"/\"OP\". Fields: +0x04 machine-parameter index, +0x08/+0x0c/+0x10 minimum, maximum and default in 8.8 (the 12 bytes 0x40006ff0 copies out; FRQ id 47: 0, 0x7f00, 0x7f00; TYP id 49: 0, 0x600, 0 = LP2), +0x18 sequential id, +0x1c dense ordinal, +0x24 modflags, +0x28/+0x2c/+0x30 long/group/short name pointers."
+
+[data.param_modflags]
+addr = 0x401bf918
+status = "verified"
+note = "The modflags word is +0x24 of each 0x34-byte record, in the corrected frame above. Dumped over all 469 records: 0x600 -> 348, 0 -> 113, 0x200 -> exactly 7, 0x10000 -> exactly 1. The 0x200 set is ids 64,65,66,68,69,70,71 - every LFO control except Destination - which is exactly the set a modulation destination list should offer. 0x10000 is on id 67 (Destination) alone. This distribution is what corroborates the corrected frame over the 0x401bf940 one; a name-only check cannot tell the two apart."
+
+[data.param_page_table]
+addr = 0x4028843c
+status = "verified"
+note = "The 12-entry parameter page table: each entry is {namePtr, paramId[8]}, 0x24 bytes. Page 3 is LFO with ids 64..71. Page 6 is FILTER, ids at 0x40288518: 50 51 52 53 / 47 48 49 54, ATK DEC SUS REL on the top row and FRQ RES TYP ENV below, so FRQ is index 4 and TYP index 6. Pages 9 and 10 (REVERB, DISTORTION) already contain zero gaps, so a partly-populated page is a stock-supported shape, and pages are enumerated from this data table rather than hard-coded per page. Page ids are clamped below 12 at 0x400ff574."
+
+[data.machine_to_storage_voice]
+addr = 0x401c59cc
+status = "verified"
+note = "Same table as sound_slot_map; the name is kept for the Ghidra import (ApplySymbols.java). Map from sound index to storage slot for the 12 voice machines: a permutation of 0..41, so every mapped slot is in use. The eight LFO settings occupy slots 33..40. The record's parameter member is 48 words, so slots 42..47 exist beyond the map: allocated, saved and never read (lfo.md Q1, re/subsystems/sound-storage.md)."
+
+[data.machine_to_storage_fx]
+addr = 0x401c589c
+status = "verified"
+note = "The FX-machine counterpart of 0x401c59cc, a permutation of 0..37, so every mapped slot is in use. Whether the FX track's record has slots beyond the map, as the voice record does, is not established."
+
+[fn.lfo_mod_block]
+addr = 0x4009e790
+status = "verified"
+note = "The per-track modulation/LFO block, run once per audio block for all 13 tracks (loop tail 0x4009eac8: moveq #13 / cmpl / bnew 0x4009e7c4). Body 0x4009e7c4..0x4009ead2. Reads its own eight settings out of words 1-8 of the same per-track array it writes modulated values into - no separate config block was found. Destination index clamped to <=41 at 0x4009ea54 (moveq #41); NO lower bound was found. Its only call is getFadeStep."
+
+[fn.getFadeStep]
+addr = 0x4009e580
+status = "verified"
+note = "Fade-envelope step for the LFO, asserting EMAC fractional mode with 0x4000 as unity. The only call the LFO mod block makes."
+
+[data.lfo_track_array]
+addr = 0x8000f7a8
+status = "inferred"
+note = "Per-track modulation array, 42 words per track, stride 0x54, one entry per track across 13 tracks (12 voices + FX). Reached as 0x8000e57c + 4652 in the block, and the destination write adds a word index of 2326 before scaling by 2. Words 1-8 hold the LFO's own eight settings; word 0 and words 9-41 are treated as free destinations. That the 42 words are per-destination modulated values is INFERRED from the block reading its config from the array it writes - no writer deliberately populating words 1-8 as destinations was found."
+
+[data.lfo_block_call_site]
+addr = 0x40120fae
+status = "inferred"
+note = "Call site of the LFO mod block, inside the audio interrupt. A second LFO needs no new interrupt entry point because this loop already runs all 13 tracks per block. The enclosing routine's exact boundaries were not established."
+
+[data.lfo_state_base]
+addr = 0x41942554
+status = "inferred"
+note = "State base the LFO block works from. Not independently confirmed this pass - carried as inferred."
+
+[fn.pattern_track_load]
+addr = 0x40008b2e
+sig = "bool(TrackPattern *live, TrackStorage *storage)"
+status = "verified"
+note = "Storage -> live for one pattern track. Storage is 641 (0x281) bytes per track, every byte read; live is 917 (0x395). Storage +0x279 unpacks to live +0x2ca (bit 7, euclid enable) and live +0x2d0 (bits 0..1, Bool Operator); bits 2..6 are ignored. Called per track from the pattern loader at 0x40009194."
+
+[fn.pattern_track_save]
+addr = 0x40008dc8
+sig = "bool(TrackStorage *storage, TrackPattern *live, ...)"
+status = "verified"
+note = "Live -> storage for one pattern track, the inverse of pattern_track_load. Packs storage +0x279 = (live[0x2ca] << 7) | (live[0x2d0] & 3) as one byte, so only bit 0 of the euclid-enable byte survives a save."
+
+[data.pattern_track_load_euclid_resume]
+addr = 0x40008cca
+status = "verified"
+note = "pattern_track_load at `moveb %d0,%a2@(714)`, which stores the unpacked euclid-enable byte. Mod 0002's load detour at 0x40008cc4 rejoins here with d0 carrying the accent bit as well."
+
+[data.pattern_track_save_euclid_resume]
+addr = 0x40008f68
+status = "verified"
+note = "pattern_track_save at `andl %d2,%d1`, after the euclid-enable byte has been shifted to bit 7. Mod 0002's save detour at 0x40008f62 rejoins here with the accent bit already placed at bit 2."
+
+[data.track_speed]
+addr = 0x000002c7
+image = "hardware"
+status = "verified"
+note = "Offset, not an address: per-track byte at TrackPattern+0x2c7, the track speed index 0..6 = 2x, 3/2x, 1x, 3/4x, 1/2x, 1/4x, 1/8x. trig_fire at 0x4009aa80 indexes the step-duration table at 0x401db448 (3, 4, 6, 8, 12, 24, 48 ticks; 6 = 1x) with it. Getter 0x400c0c04 returns 2 when there is no storage; setter 0x400c0c20 clamps to 0..6. Saved in storage +0x277 bits 0..6, and the load maps any value over 6 to 2, so bits 3..6 carry nothing."
+
+[data.trig_fire_euclid_flag_resume]
+addr = 0x4009aad2
+status = "verified"
+note = "trig_fire at `eorl %d5,%d0`, with d5 = 1 and d0 the euclid-enable byte. Mod 0002's detour at 0x4009aaca re-emits the byte load and the following lea, masks d0 to bits 0..1, and rejoins here."
+
+[data.trig_fire_vel_resume]
+addr = 0x4009afa6
+status = "verified"
+note = "trig_fire just after `movel %sp@(60),%d0; addal %a2,%a3`: d0 is the trig's velocity 0..127 (the step's own, else the track default at +0x2c1), a3 the track base. The next instructions store the low word of %sp@(72) (step velocity << 8, or 0xffff) to event +6 and d0 << 8 to event +4. Mod 0003 detours at 0x4009afa0 and rejoins here."
+
+[data.param_apply_delta_body]
+addr = 0x400378b6
+status = "verified"
+note = "param_apply_delta after `moveal %sp@(16),%a2; movel %sp@(28),%d3`, at the mvzb that narrows the FUNC-held argument. Mod 0003 detours at 0x400378ae, re-emits both loads and rejoins here."
+
+[data.param_value_text_body]
+addr = 0x400a85f0
+status = "verified"
+note = "param_value_text after `movel %sp@(28),%d4; moveal %sp@(24),%a3`, which load the id and the object. Mod 0003 detours at 0x400a85e8 - where 0002's text gate resumes - re-emits both loads and rejoins here."
+
+[fn.vel_get_stock]
+addr = 0x400bfd20
+sig = "int8(TrackPattern *this)"
+status = "verified"
+note = "The track default velocity getter (TrackPattern+0x2c1 through vtable[0x28]). Called from the get-by-id switch arm for VEL at 0x400a87b6 - whose result the shared tail sign-extends and shifts into 8.8 - and directly from live play and record at 0x4003def0, 0x400c62ea, 0x400c78fe, 0x400c794c, 0x400c7cc4. Mod 0003 repoints only the get-by-id call."
+
+# ------------------------------------------------ sound record and live sound
+# Sound index = the parameter record's +0x04 for sound parameters, 0..41. The live
+# sound keeps its 42 values at +0x14 + 2*index; storage keeps 42 mapped slots at
+# +0x1c + 2*slot inside a 48-word member. Sound index 0 has no parameter record
+# and maps to slot 41. See re/subsystems/lfo.md Q1, Q8, Q9, and sound-storage.md.
+
+[fn.sound_load]
+addr = 0x400081f6
+sig = "bool(Sound *live, SoundStorage *storage)"
+status = "verified"
+note = "Storage -> live for a v4 sound record. memset(live+0x14, 0, 0x54), then live[0x14 + 2*sound_index_of_slot[k]] = storage[0x1c + 2*k] for k = 0..41; storage slots 42..47 are never read. Unpacks +0x7c/+0x7d into live +0x68..+0x6c and loads the modTarget routes. The live object is 0x98 bytes and is copied by value, so the target is often a heap temporary."
+
+[fn.sound_save]
+addr = 0x4000843a
+sig = "bool(SoundStorage *storage, Sound *live, ...)"
+status = "verified"
+note = "Live -> storage. Writes magic 0xbeefbace and version 4, memset(storage+0x1c, 0, 0x60), then the 42 mapped slots through sound_slot_map, and the sentinel 0xbacef00c at +0x9e. So every save zeroes storage slots 42..47; slot 41 (sound index 0) is written like any other. Ten callers."
+
+[data.sound_slot_map]
+addr = 0x401c59cc
+status = "verified"
+note = "Voice sound index -> storage slot, a 42-entry permutation of 0..41. Index 0 -> slot 41. Its inverse (slot -> index) is the table directly after, at 0x401c5a74, so the map cannot grow in place. The FX-track pair is 0x401c589c / 0x401c5934 (38 entries). Getters: 0x40007602 (index -> slot) and 0x400075c8 (slot -> index), each choosing the FX table for track 12."
+
+[fn.sound_init_defaults]
+addr = 0x400122b6
+sig = "void(Sound *live, int, int machine)"
+status = "verified"
+note = "Fills a live sound with defaults. Sets +0x68..+0x6b, then for index 0..41 asks sound_param_id_for_index; writes 0 where it returns 0, else the parameter's default via 0x40006ff0. Index 0 is never in the table, so a fresh sound always has 0 at index 0. Called at 0x4001242e, 0x400bcdf0 and 0x400bd7fc."
+
+[fn.sound_param_id_for_index]
+addr = 0x40007028
+sig = "int(int soundIndex, int machine)"
+status = "verified"
+note = "Sound index -> parameter id, 0 when none. Indices 9..16 (machine parameters) read the per-machine table 0x413db5fc[machine*8 + index-9]; other indices read the 42-entry table 0x413db554. Both are RAM, built by param_tables_build."
+
+[fn.param_tables_build]
+addr = 0x40006cd8
+status = "verified"
+note = "Zeroes and fills the RAM index -> id tables from the ROM parameter records: 0x413db554 (42 longs), 0x413db4ac (42), 0x413db464 (18) and 0x413db5fc (0x6a0 B, per machine). Routing is by the record's +0x00 kind: kinds 53..55 fill 0x413db554 at the record's +0x04, which covers sound indices 17..41 only, so entry 0 stays 0. The records at index 0 - id 28 (kind 62) and id 29 NOT (kind 61) - never reach it."
+
+[fn.param_container_index]
+addr = 0x40006ea8
+sig = "int(int paramId)"
+status = "verified"
+note = "Returns the ROM parameter record's +0x04 - the index within its own container (sound, trig, ...). Not a global index: VEL (trig) and LFO MUL (sound) both return 1."
+
+[fn.sound_randomize]
+addr = 0x400bc5f2
+sig = "void(TrackPattern *this)"
+status = "verified"
+note = "Randomize the current track's sound: runs sound_randomize_values on it, then notifies via vtable[0x10]."
+
+[fn.sound_randomize_values]
+addr = 0x400bc506
+sig = "void(Sound *live)"
+status = "verified"
+note = "For every parameter id 0..468 whose RAM record (PARAM_INFO_BASE + id*0x54) has a randomiser at +60, writes live[0x14 + 2*param_container_index(id)] = the randomised value, then names the sound RANDOM. Trig ids share indices with sound ids but come first, so sound values overwrite them. Index 0 is written only if id 28 or 29 has a randomiser: the static initialisers clear both (0x401a8b90, 0x401a8bce); later computed writers of +60 are not resolved."
+
+[fn.sound_apply_step_locks]
+addr = 0x4003b8aa
+status = "verified"
+note = "Copies the current track's sound into a 0x98 temporary and overlays a step's parameter locks, for each sound index 0..41 that has one (0x400bfb52 returns < 0 where there is none). Index 0 is written only if a lock exists for it, which stock never creates."
+
+[fn.static_ctors_run]
+addr = 0x40100682
+status = "verified"
+note = "Runs the C++ static constructors: count at 0x402cd650 (146), entries at 0x402cd654. Walks by count, not to a null, so the table ends at 0x402cd89c - the start of the cave2 padding."
+
+# ------------------------------------------------ parameter pages
+[fn.page_info]
+addr = 0x400ff574
+sig = "PageDesc *(int pageId)"
+status = "verified"
+note = "Page descriptor {namePtr, id0..id7}, 0x24 B each, from the 12-entry table at 0x4028843c; ids above 11 get the default at 0x401ec670. The only reader of that table. Its 8 callers (0x4003794c, 0x40037976, 0x4003a29e, 0x4003a3b6, 0x4003a4ce, 0x400aa0be, 0x400aa1ba, 0x400aa7cc) use only the name and the ids."
+
+[data.page_info_resume]
+addr = 0x400ff57a
+status = "verified"
+note = "page_info after `moveq #11,%d1; movel %sp@(4),%d0`, at the range compare. Mod 0004 detours the entry, answers page 12 itself and rejoins here for the rest."
+
+[fn.page_get_value]
+addr = 0x40038462
+sig = "int(PageView *this, int paramId, int lock)"
+status = "verified"
+note = "ParameterPageView vtable +0x54, which the knob renderer's value helper 0x40039608 calls. With lock >= 0 and a sound parameter, reads the value by param_container_index through the sound accessor; otherwise asks the view's accessor object (vtable +160) and tail-calls its get-by-id. The LFO/FILTER/AMP view class (vtable 0x401e32c4) does not override it."
+
+[data.page_get_value_body]
+addr = 0x4003846a
+status = "verified"
+note = "page_get_value past its prologue - lea %sp@(-12),%sp then moveml %d2-%d3/%a2,%sp@."
+
+[data.param_apply_delta_track]
+addr = 0x400378bc
+status = "verified"
+note = "param_apply_delta at `jsr 0x400b68d2`, after `mvzb %d3,%d3; movel %a2@(116),%sp@-`. Mod 0004 detours at 0x400378b6 - where 0003 rejoins - re-emits both and rejoins here."
+
+[data.param_value_text_args]
+addr = 0x400a85f8
+status = "verified"
+note = "param_value_text after `movel %sp@(32),%d2; movel %sp@(36),%d3`. Mod 0004 detours at 0x400a85f0 - where 0003 rejoins - re-emits both and rejoins here."
+
+[fn.track_index_of]
+addr = 0x400b68d2
+sig = "int(TrackSelection *this)"
+status = "verified"
+note = "The selected track of a selection object. current_track_pattern passes project + 48; page views pass their own +116."
+
+[fn.kit_track_sound]
+addr = 0x400a675e
+sig = "SoundAccessor *(Kit *this, int track)"
+status = "verified"
+note = "Clamps track to 0..11 and returns kit + 60 + track * 352. The active kit is project + 352 (0x400ae45e). The accessor's vtable +0x28 returns the live sound, whose parameter array is at +0x14."
+
+[fn.kit_param_changed]
+addr = 0x4003355c
+sig = "void(KitBank *this, int track, int paramId, int value)"
+status = "verified"
+note = "One parameter of one track changed. Writes the value into the bank the selector at +0x11de4 names, at track * 938 + paramId * 2, sets bit paramId in that bank's changed bitmap (+0x5f5c + bank * 24388 + track * 1876), sets the dirty byte at +4, and wakes the waiter on the lock at +8. The drain 0x4003364a, which the kit save calls at 0x400b162e, turns those bits into records for the track's sound mirror, so this call - not the write to the live sound - is what the saved project reads. The sound parameter setter calls it at 0x400a9e6c with the SoundParameterSet's +4 (the bank) and +8 (the track)."
+
+[data.view_lfo_page_count]
+addr = 0x400cb02a
+status = "verified"
+note = "`moveq #1,%d1` - the page count for the voice LFO view's page vector, in the view factory 0x400ca9b2. The source pointer is the immediate at 0x400cb030 (0x401e1b14, holding page 3); the view is built by 0x400d2d34 with key 0x35."
+
+[fn.page_knob_turn]
+addr = 0x40039f3c
+status = "verified"
+note = "ParameterPageView vtable +0x48, the encoder handler. Knob -> id via vtable +156 (0 means an empty slot: return). ROM modflags +0x24 bit 0x10000 (LFO DST only) diverts to the destination picker 0x40039b8e. Otherwise the step comes from the RAM record's +4/+8 and the acceleration block copied from +0x10 (0x1c B), the delta from 0x4006f18e, and a zero delta returns without applying. Every RAM record, the Error ids included, fills +4..+0x13 from one template, so every id gets a working step."
+
+[fn.param_knob_draw]
+addr = 0x400a857c
+status = "verified"
+note = "ParameterSet vtable +0x58, shared by all four parameter-set classes, called by the page's knob draw. Draws nothing when the RAM record's draw callback is empty (+0x2c), else invokes the std::function at +0x24. Records get that callback copied from the template at 0x419a4618 - for id 1 at 0x401a84d0 exactly as for VEL at 0x401a8c02."
+
+[data.param_knob_draw_body]
+addr = 0x400a8584
+status = "verified"
+note = "param_knob_draw past its prologue - lea %sp@(-16),%sp then moveml %d2-%d5,%sp@. Mod 0004 detours the entry for the two destination knobs and rejoins here."
+
+[fn.lfo_dst_knob_draw]
+addr = 0x400ff9fc
+status = "verified"
+note = "LFO DST's knob draw callback, the invoker of the std::function copied from the template at 0x419a44f8 - every other parameter gets 0x419a4618, whose invoker draws the dial. Called as (functor, value, x, y, h, 1). Maps value >> 8 through the sound's destination list (accessor vtable +0x4c) to a parameter id, then draws that record's +0x30 short name with text_draw, so the knob shows a name and no dial."
+
+[fn.text_draw]
+addr = 0x400714e0
+sig = "void(int x, void *font, int y, int h, int, int, const char *width, const char *fmt, ...)"
+status = "verified"
+note = "The formatted text draw behind the knob labels and LFO DST's value. The width string is measured for the field, not drawn - LFO DST passes \"XXX\". Its font argument comes from text_font(text_ctx)."
+
+[fn.text_font]
+addr = 0x40071b7c
+sig = "void *(void *ctx)"
+status = "verified"
+note = "Returns ctx +4, the font the draw call takes. LFO DST's knob draw passes text_ctx."
+
+[data.text_ctx]
+addr = 0x417e389c
+status = "verified"
+note = "The drawing context LFO DST's knob draw passes to text_font. RAM."
+
+[data.str_fmt_s]
+addr = 0x402410a4
+status = "verified"
+note = "\"%s\", the format LFO DST's knob draw passes to text_draw."
+
+[data.str_width_xxx]
+addr = 0x402410a8
+status = "verified"
+note = "\"XXX\", the width string LFO DST's knob draw measures its field with."
+
+[data.param_set_value_body]
+addr = 0x400a9008
+status = "verified"
+note = "param_set_value past its prologue - lea %sp@(-40),%sp then moveml %d2-%d7/%a2,%sp@. Mod 0004 detours the entry to catch the destination list's commit."
+
+[fn.param_set_read]
+addr = 0x400a8dfa
+sig = "int(SoundParameterSet *set, int paramId)"
+status = "verified"
+note = "SoundParameterSet vtable +0x28: the value of one sound parameter, by id, read straight from the live sound (+0x14 + 2 * container index) or from a step lock when one covers it. Returned raw, as stored - for LFO DST that is the destination's container index shifted up by 8, which is how its commit writes it. This is NOT page_get_value: the destination picker reads through here at 0x40039cca, so a mod that encodes its own value in page_get_value alone is invisible to it."
+
+[data.param_set_read_body]
+addr = 0x400a8e02
+status = "verified"
+note = "param_set_read past its prologue - lea %sp@(-16),%sp then moveml %d2/%a2/%fp,%sp@. Mod 0004 detours the entry so its four ids read as stock would store them."
+
+[fn.param_set_value]
+addr = 0x400a9000
+sig = "void(ParameterSet *set, int paramId, int value, int track, int, bool)"
+status = "verified"
+note = "The value setter every parameter write lands in: clamps value against the record's range (0x40006ff0), asks the set's vtable +0x24 whether it is in range (a bool, not a write), writes through +0x70 (sound_set_write for sounds) with the track argument, calls +0x5c when the last argument is set, and returns the value read back through +0x28. The destination list's commit callback 0x40037a1a calls it with the chosen parameter's container index shifted into 8.8."
+
+[fn.view_list_open]
+addr = 0x4018193c
+status = "verified"
+sig = "bool(void *optional)"
+note = "Misnamed: true when the optional it is handed is EMPTY - it returns seq on 0x40181928, which reads the control block's +4. The page view keeps the destination list in the optional at view +380, so view_list_open(view + 380) is 'no list is up'. page_knob_turn tests it at 0x40039fca and opens the list through the picker when it is true."
+
+[fn.dest_list_view_ctor]
+addr = 0x4004ad20
+sig = "void(ListView *this, int track, ParameterSet *set, int containerIndex, int currentId, int knob, int mask, int x, int w, int y, int h)"
+status = "verified"
+note = "Builds the destination list view, 0xe0 bytes. The last four arguments are the panel's geometry and land at this +184 x, +188 width, +192 y, +196 height. The picker passes 49, 79, 10, 44 - 49 + 79 = 128, so stock's list sits flush against the right edge; MOD SETUP's caller at 0x4004bab8 passes 21, 107, 0, 50, right-aligned the same way. Two callers only: the LFO DST picker 0x40039b8e and MOD SETUP."
+
+[fn.dest_list_build]
+addr = 0x400aa214
+sig = "IntVector *(IntVector *ret, ParameterSet *set, int modflags)"
+status = "verified"
+note = "Builds the destination list the LFO DST picker shows. Walks container indices 0..41, maps each through the set's vtable +0x4c to a parameter id, drops 0 and any id whose modflags at 0x40007234 lack every bit of the mask, and appends the id. The result is a vector object whose +0 and +4 are begin and end over 4-byte elements. The list view's constructor calls it at 0x4004aec6 with the mask the knob handler derived from the record - 0x600 for LFO DST."
+
+[data.dest_list_build_resume]
+addr = 0x4004aecc
+status = "verified"
+note = "The `addql #8,%sp` that pops dest_list_build's arguments in the list view constructor 0x4004ad20; the built vector is at %fp@(-88). Mod 0004 detours the jsr before it and rejoins HERE, so this instruction still runs exactly once - the stub must not re-emit it."
+
+[fn.param_short_name]
+addr = 0x400a8f94
+sig = "const char *(void *obj, uint id)"
+status = "verified"
+note = "The short-name accessor behind every knob label: it walks 0x401bf918 + id*0x34 and returns record +0x30, clamping ids >=469 to record 0. VEL (id 30) therefore yields \"VEL\" at 0x4025b500. Its three callers - 0x40037c1c and 0x40037d44 in the page's two knob draw functions, and 0x400d3790 in the parameter page draw - each format the result with \"%.7s\" into a 16-byte buffer (via 0x4002b0ac), so the answer here is the label text and nothing else. The long-name accessor 0x400a8fb6 is a separate entry point and feeds ui_set_title instead. Mod 0003 detours at 0x400a8f98, after the id load."
+
+[data.param_short_name_body]
+addr = 0x400a8f9e
+status = "verified"
+note = "param_short_name after `cmpil #469,%d1`, at the scs that consumes the compare's flags. Mod 0003 detours at 0x400a8f98, re-emits the compare and rejoins here."
+
+[data.parameter_set_vtables]
+addr = 0x401dcaf8
+status = "verified"
+note = "Vtables of the page accessor objects returned by page view vtable +160: ParameterSet 0x401dcaf8, SoundParameterSet 0x401dcb74, FxParameterSet 0x401dcbf0, TrigParameterSet 0x401dcc6c. Each has param_value_text at +0x54 and param_knob_draw at +0x58; SoundParameterSet's +0x28 reads a sound value by container index (0x400a8dfa)."
+
+[const.SOUND_PARAM_SET_VT]
+value = 0x401dcb74
+status = "verified"
+note = "SoundParameterSet's vtable, as its constructors install it (0x400aa852, 0x40197578) - the value of an instance's first word."
+
+[const.TRIG_PARAM_SET_VT]
+value = 0x401dcc6c
+status = "verified"
+note = "TrigParameterSet's vtable, as its constructor 0x400a9d48 installs it - the value of an instance's first word."
+
+[data.trig_fire_cfg_resume]
+addr = 0x4009b008
+status = "verified"
+note = "trig_fire after `movel %d5,%a4@(12); movel %d0,%a4@(24)`, a few instructions after the event is marked valid (`movel %d0,%a4@` at 0x4009afe2). Every path that bails out does so before this point, so only trigs that produce an event reach it. The frame is balanced here: the track argument is at %sp@(92). Mod 0004 phase 2 detours at 0x4009b000 and rejoins here."
+
+[fn.lfo_block]
+addr = 0x4009e790
+status = "verified"
+note = "The LFO mod block (see re/subsystems/lfo.md). Called once per audio block at 0x40120fae with one long argument, which the caller pops at 0x40120fb4."
+
+[data.lfo_call_resume]
+addr = 0x40120fb4
+status = "verified"
+note = "The audio interrupt just after `jsr lfo_block` - `addql #4,%sp` pops its argument. Mod 0004 phase 2 detours the jsr at 0x40120fae, runs the random modifiers, calls lfo_block itself and rejoins here."
+
+[fn.page_view_activate]
+addr = 0x40037826
+status = "verified"
+note = "ParameterPageView vtable +0x18. Resets the knob state (view+144), reads the title (vtable +0x4c, page_info(selected).name) and pushes it to the screen header: std_string_from_cstr, ui_set_title(view+108, &s), std_string_dtor. The only place the header title is set - page cycling does not repeat it, so pressing a page key on an already-active multi-page view left the header one page behind."
+
+[fn.std_string_from_cstr]
+addr = 0x401bcd4c
+sig = "void(std::string *s, const char *c, void *alloc)"
+status = "inferred"
+note = "COW std::string constructor, as used by page_view_activate on a 4-byte stack string."
+
+[fn.ui_set_title]
+addr = 0x40035fe8
+sig = "void(UiContext *ui, std::string *title)"
+status = "inferred"
+note = "Pushes a view title to the screen header; ui is the view's +108."
+
+[fn.std_string_dtor]
+addr = 0x401bb29c
+sig = "void(std::string *s)"
+status = "inferred"
+note = "COW std::string destructor, pairing std_string_from_cstr."
+
+[data.page_cycle_after_invalidate]
+addr = 0x4003ab9c
+status = "verified"
+note = "In the page view key handler, after the page-key cycle `index = (index + 1) % count` (0x4003ab86) and `movel %a2,%sp@-; jsr 0x40078514` (invalidate). The pushed view is popped by the addql #8 at 0x4003aba6. Mod 0004 detours at 0x4003ab94 to push the new page's title here."
+
+
+# ----------------------------------------------------- effects returns, PRE and POST
+# Traced 2026-09-21 for mods/0006-comp-preview. Two return mixers read the SAME two
+# effect output buffers and differ only in which gain bank scales them, so the buffer
+# address discriminates nothing - reading the wrong bank models a signal that never
+# reaches the compressor, and the trace still looks plausible. The bank is everything.
+#
+#   formatter 0x400fbe1e   array[0]="PRE", array[1]="POST"      -> value 0 is PRE
+#   router    0x4010e8a0   flag 0 -> bank 0, AND zeroes bank 1
+#   bank 0    0x42fb4ab4   consumed by 0x4010eb26 -> output +48  <- drives the compressor
+#   bank 1    0x42fb4abc   consumed by 0x4010ebfe -> output +56
+#
+# The router zeroing the unselected bank is what makes an estimator safe: read bank 0
+# unconditionally and a POST setting contributes zero on its own, per effect, with no
+# need to read the flag at all.
+
+[fn.fx_return_mix_pre]
+addr = 0x4010eb26
+sig = "void(int out_slot)"
+status = "verified"
+note = "The PRE return mixer - the one whose output reaches the analog mixer before distortion and the compressor, so it is the only return that drives the detector. Reads the delay output at 0x80007c44 and the reverb output at 0x80007b44, scales them by the bank 0 gains ramping from 0x419ca020/0x419ca024 toward 0x42fb4ab4/0x42fb4ab8 in (target-current)>>5 steps across 32 frames, and writes stereo into the output ring at 0x80000030 + (slot<<11) on a 64-byte frame stride. In the EMAC loop d1 (toward 0x42fb4ab4) multiplies the sample loaded from 0x80007c44 and d0 (toward 0x42fb4ab8) the one from 0x80007b44, which is what fixes delay to slot 0 and reverb to slot 1. NOT a returns-only mix: the loop takes a THIRD source through a4/a5, at 0x42ac6f30 + (*0x8000fef4)*1536 + 8 and + 12 on a 48-byte frame stride, with a FIXED coefficient d5 = 0xeb2a7c30 rather than a ramped gain - so each output sample is a sum of four scalar-times-sample products, not two. That third source is fx_mix_ring channels 2 and 3, and it is NOT the dry voice sum: the voices occupy channels 4..11 of the same ring, per voice_channel_map, and this mixer never reads them. So an estimator that reconstructs the voices itself and adds delay and reverb here does not double-count. What channels 2/3 carry is still open - see fx_mix_stage_buffer. Note also that this project has a history of mis-decoded EMAC operands, so the coefficient-to-source pairing above deserves re-checking before anything depends on it."
+
+[fn.fx_return_mix_post]
+addr = 0x4010ebfe
+sig = "void(int out_slot)"
+status = "verified"
+note = "The POST return mixer. Same two source buffers, bank 1 gains at 0x42fb4abc/0x42fb4ac0 against currents 0x419ca018/0x419ca01c, writing the output ring at 0x80000038 + (slot<<11). Its output is summed after the compressor, so it does NOT drive the detector and an estimator must not include it. This is the wrong-bank trap: nothing about the audio it reads distinguishes it from fx_return_mix_pre."
+
+[data.fx_return_gain_route_site]
+addr = 0x4010e8a0
+status = "verified"
+note = "Routes each effect's return gain to one bank and zeroes the other. Per effect: reads the flag byte, computes (flag != 0) as 0 or 1, scales the level word, stores the product at base + 8*index and clears base + 8*(1-index). Delay uses base 0x42fb4ab4 with level 0x8000fbb8 and flag 0x8000fbbc; reverb uses base 0x42fb4ab8 with level 0x8000fbca and flag 0x8000fbcc. The clear of the unselected bank is the load-bearing detail for any estimator."
+
+[fn.fx_prepost_format]
+addr = 0x400fbe1e
+sig = "void(char **out, int value_8_8)"
+status = "verified"
+note = "Formatter for the returns' PRE/POST parameter. Builds a two-entry array on the stack - array[0] = \"PRE\" at 0x40237586, array[1] = \"POST\" at 0x40245029 - arithmetic-shifts the 8.8 value right by 8, clamps it to 0..1 and indexes. This is what fixes value 0 as PRE, and with it bank 0 as the pre-compressor return."
+
+[data.fx_return_gain_pre]
+addr = 0x42fb4ab4
+status = "verified"
+note = "Bank 0, the PRE return gain targets: delay at +0, reverb at +4 (0x42fb4ab8). Written by fx_return_gain_route_site, consumed by fx_return_mix_pre. Zero for an effect whose PRE/POST parameter is POST. An estimator reads these two words and needs nothing else to get the routing right."
+
+[data.fx_return_gain_post]
+addr = 0x42fb4abc
+status = "verified"
+note = "Bank 1, the POST return gain targets: delay at +0, reverb at +4 (0x42fb4ac0). Consumed by fx_return_mix_post. Recorded so it is named and can be avoided, not so it can be used."
+
+[data.fx_return_gain_pre_current]
+addr = 0x419ca020
+status = "verified"
+note = "The ramped current values behind fx_return_gain_pre - delay at +0, reverb at +4 - stepped toward the targets across the 32 frames of a block. A per-block estimator should read the target rather than this, which costs at most one block of ramp and avoids depending on where in the block it is sampled. The POST pair is at 0x419ca018/0x419ca01c."
+
+[data.fx_delay_out]
+addr = 0x80007c44
+status = "verified"
+note = "The first effect processor's stereo output, 32 frames, read by BOTH return mixers. Verified as the source multiplied by the bank slot-0 gain in fx_return_mix_pre; that the first effect is the delay is inferred from re/subsystems/compressor-hardware.md, not re-derived here."
+
+[data.fx_reverb_out]
+addr = 0x80007b44
+status = "verified"
+note = "The second return source, read by BOTH return mixers and multiplied by the bank slot-1 gain. Also the reverb send input, processed in place, so the return mixers - which run before current-block FX generation at 0x4010e650 - see the previous block's result. That one-block skew is far below the preview trace's resolution: the trace pins one bar to 64 columns at any tempo, so a column is roughly 47 blocks at 120 BPM and fewer as the tempo rises - still tens of blocks either way."
+
+[data.output_ring_base]
+addr = 0x80000000
+status = "verified"
+note = "Output ring, four slots of 2048 B, addressed as base + (slot << 11) with a 64-byte frame stride. The PRE return pair lands at +48/+52 within each frame and the POST pair at +56/+60; other writers use +36, +40 and +44. Which physical output each frame word feeds is NOT established here - the PRE/POST question was settled by the gain bank, not by the channel map."
+
+[const.OUTPUT_FRAME_STRIDE]
+value = 64
+status = "verified"
+note = "Bytes per frame in the output ring: fx_return_mix_pre writes two longwords then advances by 56."
+
+[const.FX_RETURN_PRE_OFFSET]
+value = 48
+status = "verified"
+note = "Byte offset of the PRE return stereo pair within an output ring frame. POST is at 56."
+
+[data.fx_return_route_flag_delay]
+addr = 0x8000fbbc
+status = "inferred"
+note = "Read as a signed byte by fx_return_gain_route_site and used as the delay return's bank selector; the reverb's is at 0x8000fbcc. That these bytes ARE the PRE/POST parameter fx_prepost_format renders is inferred, not traced: both reads are absolute, there is no absolute writer, and the parameter block is reached through a base register. The circumstantial case is strong - they sit just below the compressor parameter block at 0x8000fbd4, so the same FX-track parameter area, and the formatter is exactly two-valued. To close it, read these bytes back on the device and confirm they move 0 <-> 1 with the UI control."
+
+[data.fx_return_level_delay]
+addr = 0x8000fbb8
+status = "inferred"
+note = "Read as a signed word by fx_return_gain_route_site and scaled into the return gain; the reverb's is at 0x8000fbca. Verified as the level input to the gain computation; that it is the user-facing return level parameter is inferred from position in the same block as fx_return_route_flag_delay. Gain units are not established from the code; 0006 carries a measured constant per return instead (CAL_DELAY, CAL_REVERB, re/subsystems/compressor-model.md)."
+
+# The frame ring the return mixers read their third source from. Traced 2026-09-21
+# to settle whether an estimator adding the returns would double-count the voices.
+# It would not: the voices are channels 4..11, and the return mixers read 2 and 3.
+
+[data.fx_mix_ring]
+addr = 0x42ac6f30
+status = "verified"
+note = "Double-buffered frame ring, slot = *0x8000fef4, 1536 B per slot, 32 frames of 48 B, 12 longword channels per frame. Channels 4..11 are the eight physical voices, reached through the permutation table at voice_channel_map. Channels 0/1 and 2/3 are two stereo pairs staged from fx_mix_stage_buffer by the loop at 0x4011fc82, which de-interleaves a stereo source into one pair or the other. fx_return_mix_pre reads channels 2 and 3 - NOT the voices - which is what says an estimator summing delay and reverb on top of its own voice reconstruction does not double-count."
+
+[data.fx_mix_ring_slot]
+addr = 0x8000fef4
+status = "verified"
+note = "The fx_mix_ring double-buffer index, toggled by the eorl at 0x40121458 once a block. Readers derive the byte offset as (slot<<11) - (slot<<9), i.e. slot * 1536."
+
+[data.voice_channel_map]
+addr = 0x401bea90
+status = "verified"
+note = "Eight signed bytes, 4, 7, 5, 8, 10, 9, 11, 6, then -1 padding: physical voice index to fx_mix_ring channel. Read with mvsb %a4@+ at 0x4010ea94, where a negative entry selects a different mix path. This is the permutation the handover means by \"physical order differs from receive order\". It is also the FIRST object in rodata - .text ends at exactly this address, which `make cavescan` derives independently."
+
+[fn.voice_output_mix]
+addr = 0x4010ea30
+sig = "void(..., long *out_frames)"
+status = "verified"
+note = "Per-voice output mixer. Walks voice_channel_map, and for each voice mixes sources at 0x800067f8/0x80006bf8/0x80007000/0x80007040 - or, when the map entry is non-negative, the fx_mix_ring channel it names - into the output ring on a 64-byte frame stride, EMAC fractional mode with macsr = 160. Runs immediately before fx_return_mix_pre."
+
+[fn.fx_generate]
+addr = 0x4010e650
+sig = "void(void *block)"
+status = "verified"
+note = "Current-block effects generation, called from the block driver at 0x4012139a. The return mixers run BEFORE it, so they consume the previous block's delay and reverb output. 0006's audio hook at 0x401213a0 sits immediately AFTER it, inside the window 0x4012139a..0x4012143a that compressor-hardware.md identifies as the right one: there the receive buffer holds block k's voices unmutated, the FX buffers hold block k's fresh output, and the coefficient getter returns the four-tick-old bank matching those voices. The remaining offset is NOT about reading earlier or later here. In analog time the FX buffer in hand is AHEAD of the voice words in hand - the voices at k are an ADC capture of audio from about k-4, while the FX derived from them still has to leave through the DAC - so an exact model pairs the current voices with an OLDER FX block, which needs a history ring of about six to eight blocks. A model that skips the ring reads returns that the compressor has not heard yet; the trace misplaces them by well under a column, but the detector is nonlinear and 2.67 ms is comparable to the faster ATK settings, so this is an accuracy cost rather than a free simplification. A hook here must also leave MACSR at its resting 0x20 and must not disturb the accumulators, which the interrupt prologue saved for the interrupted context, not for callers inside it."
+
+[data.fx_mix_stage_buffer]
+addr = 0x42ac6e24
+status = "inferred"
+note = "Stereo staging buffer copied into fx_mix_ring channels 0/1 or 2/3 by the loop at 0x4011fc82, and passed to 0x4013f56c in place of the ring when the block driver's mode selector at 0x4012136c equals 5. Verified as the source of the pair fx_return_mix_pre reads; WHAT it carries is not established. External input and USB input are the natural candidates - EXT IN is documented as joining after the distortion and before the compressor, which is where this pair lands - but that is a hypothesis. Both are already outside the reconstruction's declared scope, so if it is either, the term 0006 omits is a known scope limit rather than a new gap."
+
+# ------------------------------------------------- main output RMS indicator (0009)
+[data.rx_buffer]
+addr = 0x80007440
+image = "hardware"
+status = "verified"
+note = "The receive buffer, filled each audio interrupt by 0x4010e944: 32 frames of 12 32-bit words, 48-byte stride. Words 0 and 1 are MAIN L and R, post-compressor and post-master-volume, negated, 24-bit left-justified (0x7fffff00 at full scale). See re/subsystems/compressor-hardware.md."
+
+[data.audio_rx_filled]
+addr = 0x4012135e
+status = "verified"
+note = "The audio interrupt straight after the receive buffer is filled (jsr 0x4010e944 at 0x40121358): `jsr %a2@; lea %sp@(24),%sp`. d0 from that jsr is compared against 5 at 0x4012136c, and d2 is live below. Mod 0009 detours here."
+
+[data.audio_rx_filled_resume]
+addr = 0x40121364
+status = "verified"
+note = "audio_rx_filled past the two displaced instructions, at `moveq #5,%d1`."
+
+[fn.knob_draw]
+addr = 0x40037a56
+sig = "void(PageView *view, Canvas *c, int x, int y, int id, int a5, int value, char a7, char a8, char labelsOnly)"
+status = "verified"
+note = "ParameterPageView vtable +0x94, one knob: the dial through param_knob_draw at (x, y), and the short name (or the value while turning) centred on x at y - 13. With labelsOnly set it skips the dial; with a7 set it inverts, through fill_rect, the dial box (x-9, y-7)..(x+9, y+7) or, with labelsOnly, the label box (x-13, y-14)..(x+13, y-8). The knob loop 0x40039782 calls it or knob_draw_alt per knob with x = 16 + 32 * column, y = 46 (top row) or 24 (bottom)."
+
+[fn.knob_draw_alt]
+addr = 0x40037c26
+status = "verified"
+note = "ParameterPageView vtable +0x98, knob_draw's variant, chosen by the knob loop from the value helper's first flag. Same arguments."
+
+[fn.fill_rect]
+addr = 0x400706ba
+sig = "void(Canvas *c, int x0, int y0, int x1, int y1, int colour)"
+status = "verified"
+note = "Fills the rectangle, corners inclusive and in either order, clipped to the canvas. colour < 0 XORs (inverts), otherwise sets or clears by bit 0. Canvas: +4 width, +8 height, +12 words per column, +16 pixels, column-major, canvas y at word y >> 5, bit 31 - (y & 31)."
+
+[data.comp_view_knob_draw]
+addr = 0x401e123c
+status = "verified"
+note = "CompressorPageView's vtable (0x401e11a8) +0x94 and +0x98: knob_draw and knob_draw_alt, 4 bytes each. Every other page view has its own copy of these slots, so a patch here reaches the compressor pages only - the stock page and 0006's preview page, whose draw_labels calls the same slots."
+
+# ------------------------------------------------ tempo
+# re/subsystems/tempo.md
+
+[data.tempo_word]
+addr = 0x40287c9c
+status = "verified"
+note = "The tempo, a long in 1/120 BPM: 14400 in the image (120.0). Written at 0x4009e482, read at 16 other sites."
+
+[fn.tempo_get]
+addr = 0x4011f2f0
+sig = "int(void)"
+status = "verified"
+note = "Returns tempo_word."
+
+[fn.top_bar_draw]
+addr = 0x400c827a
+status = "verified"
+note = "Draws the top bar, including the kit number (K%03d) and the tempo. The tempo branch (0x400c8490..0x400c852e) prints BPM:%3d.%d with whole = t / 120 and tenths = (t mod 120 + 6) / 12, which gives 10 without a carry when t mod 120 is 114..119, so 132.0 shows as BPM:131.10. The whole-BPM branch, when 0x400353e4 is true, rounds correctly."
+
+# ------------------------------------------------ kits
+# The working kit sits behind project + 352; saved copies of the 128 kits at
+# project + 7388 + 68 * kit. A kit is one 0x9e3-byte block.
+
+[fn.memcpy]
+addr = 0x40098b54
+sig = "void *(void *dst, const void *src, size_t n)"
+status = "verified"
+note = "Arguments pushed n, src, dst. sound_save copies the 16-byte name with it; kit reload and save copy whole 0x9e3-byte kits."
+
+[fn.mem_new]
+addr = 0x400829d4
+sig = "void *(size_t n)"
+status = "verified"
+note = "A thunk to the allocator 0x40082758; every 0x98-byte sound object and 0xa0-byte popup is allocated through it."
+
+[fn.kit_reload]
+addr = 0x400af0d2
+sig = "void(Project *)"
+status = "verified"
+note = "Reloads the current kit: memcpy(kit_working_data(project + 352), saved kit's data, 0x9e3), then kit_mark(working, 0), kit_apply(working) and kit_push(data). Guarded by the project's vtable +40. The saved kit is project + 7388 + 68 * index, its data by vtable +40; the index is the working kit's vtable +108, overridden by 0x400aae8c when that is >= 0."
+
+[fn.kit_reload_key]
+addr = 0x400dd546
+status = "verified"
+note = "Shows the reload popups: with the flag at +424 of its argument's object set, reloads every kit (0x400b131a) and shows ALL KITS RELOADED!; otherwise calls kit_reload at 0x400dd5de and shows KIT RELOADED! (format 0x402578ae, pushed at 0x400dd5e6). The only reference to that string."
+
+[fn.kit_working_data]
+addr = 0x401969e4
+sig = "void *(KitSlot *working)"
+status = "verified"
+note = "The working kit's 0x9e3-byte data: its vtable +48 at the index from its vtable +108."
+
+[fn.kit_mark]
+addr = 0x401969ba
+sig = "void(KitSlot *working, int)"
+status = "inferred"
+note = "The working kit's vtable +92 at its current index. Every stock caller passes 0, including kit_reload and kit save (0x400b12ce), so plausibly a modified flag cleared after reload and save; what sets it is not found."
+
+[fn.kit_apply]
+addr = 0x400a6538
+sig = "void(KitSlot *working)"
+status = "inferred"
+note = "Called by kit_reload after the copy and kit_mark: brings the live state in line with the working kit's data. Not read."
+
+[fn.kit_push]
+addr = 0x4011f89e
+sig = "void(void *data)"
+status = "inferred"
+note = "kit_reload's tail call, with the working kit's data: passes the kit to the engine. Not read."
+
+# ------------------------------------------------ pattern tracks: trigs and locks
+# Traced 2026-09-27 for 0012. A track block is pattern_track(pattern, track).
+
+[fn.track_selection]
+addr = 0x400ae426
+sig = "TrackSelection *(Project *)"
+status = "verified"
+note = "The project's track selection; track_index_of on it is the selected track. SAVE TRACK's action gets the track this way."
+
+[fn.trig_flag_get]
+addr = 0x400bfa0c
+sig = "bool(TrackPattern *, int step, ushort mask)"
+status = "verified"
+note = "Whether any bit of mask is set in the step's trig word, the step clamped to 0..63."
+
+[fn.trig_place]
+addr = 0x400c25b4
+sig = "void(TrackPattern *, int step, int on)"
+status = "verified"
+note = "A normal trig: sets the trig bit (0x01) to `on` and clears the four explicit bits 0x800, 0x1000, 0x2000, 0x40, so SYN, SMP, ENV and LFO follow the track's TRIG page defaults. Refuses a step at or past the track length."
+
+[fn.trig_place_lock]
+addr = 0x400c262c
+sig = "void(TrackPattern *, int step, char on)"
+status = "verified"
+note = "A trigless lock trig: sets 0x01 and all four switches explicitly off (value bits 0x80 SYN, 0x100 SMP, 0x200 ENV, 0x400 LFO cleared; explicit bits 0x800, 0x1000, 0x2000, 0x40 set). Used by the track reload for steps with locks and no trig."
+
+[fn.track_lock_set]
+addr = 0x400c0520
+sig = "bool(TrackPattern *, int step, int soundIndex, int value, char flag)"
+status = "verified"
+note = "Sets one step's lock, value as stored (8.8), refusing a step past the track length. Stock passes flag = the parameter record's long at +0x0e being non-zero (0x400071a6). Calls lock_pool_set with the pool at +44 and the track index at +64."
+
+[fn.lock_pool_set]
+addr = 0x400ac670
+sig = "bool(LockPool *, int track, int step, int soundIndex, int value, char flag)"
+status = "verified"
+note = "Locks are a dense int16 array, not a pool of slots: index track * 2837 + step * 44 + soundIndex, -1 for none, so every step can lock every sound parameter. The flag goes to a per-track byte per parameter at +5632 of the track's 5674 bytes. Posts a change through vtable +16, then 0x400ac5da(pool, track, step). lock_pool_get 0x400ac51c reads the same index."
+
+[fn.popup_ctor]
+addr = 0x400766e8
+sig = "void(Popup *, std::string *text)"
+status = "verified"
+note = "Builds a 0xa0-byte popup. SAVE TRACK wraps it in a shared_ptr (control block vtable 0x401ccab4) and shows it with view_show_popup."
+
+[fn.view_show_popup]
+addr = 0x400793f6
+sig = "void(ViewManager *, shared_ptr<Popup> *, int)"
+status = "verified"
+note = "Shows a popup; a menu's view manager is at its +100."
+
+[fn.shared_ptr_release]
+addr = 0x40170a0c
+sig = "void(ControlBlock **)"
+status = "verified"
+note = "Releases a shared_ptr through a pointer to its control-block slot."
+
+[fn.track_menu_ctor]
+addr = 0x400f9b38
+status = "verified"
+note = "TrackMenuView's constructor, the FUNC + CHRO menu: TRIGS SETUP, PAD SCALE, RELOAD TRACK, SAVE TRACK. Each item is four std::function objects (label, action, an empty one, icon) built on the stack, a 0x54-byte MenuItem from menu_item_ctor 0x40072f50, appended by 0x40072786, the functions destroyed by 0x401709c6. SAVE TRACK: label 0x400f9660, action 0x400fa112, icon 0x400f970c; managers 0x400f9a38, 0x400f9a8a, 0x400f9ae6."
+
+[data.track_menu_ctor_tail]
+addr = 0x400f9e96
+status = "verified"
+note = "The constructor's epilogue, moveml %sp@(24),%d2-%d6/%a2-%fp (6 bytes), after the last item is appended. a3 the menu, fp the item constructor, a5 the append, a2 the std::function destructor, d2..d5 the four free std::function slots, the stack at the depth each item starts at."
+
+# ----------------------------------------------------------------- on-chip ADC
+# re/subsystems/compressor-hardware.md, "Gain-reduction readback".
+
+[fn.adc_pedal_update]
+addr = 0x4013f1c8
+status = "inferred"
+note = "Called from the audio interrupt at 0x40120e94 with 0x8000fd00, the per-input config records (40 bytes each). Reads ADRSLT0/1 (0xfc094012/14; ADLST1 = 0x0021 maps them to AN1/AN2), smooths each into 0x419f0310, maps it by the record's mode into 0x419f0308/0x419f0300, and posts an event when one moves. The pedal inputs, by the strings of its users."
+
+[fn.adc_average]
+addr = 0x40139c68
+sig = "int(int sel)"
+status = "verified"
+note = "Blocking: 2048 conversions of ADRSLT0 (sel 1) or ADRSLT1 (otherwise), waiting on ADSTAT's ready bits, summed and shifted right 11. Called only from the factory protocol's #READ_ADC, 0x4013a658 and 0x4013a678."
+
+
+# ------------------------------------------------ envelopes and ENV RESET
+# Traced 2026-09-28/29 for 0015; re/subsystems/envelopes.md has the whole path.
+
+[fn.env_reset_get]
+addr = 0x400bceb4
+sig = "int(TrackSound *)"
+status = "verified"
+note = "SOUND SETTINGS' ENV RESET: the live sound's +0x6c, sign-extended; 0 when the sound accessor (vtable +0x28) has none. Bit 0 amp, bit 1 filter."
+
+[fn.env_reset_set]
+addr = 0x400bcee4
+sig = "void(TrackSound *, int value)"
+status = "verified"
+note = "Clamps to 0..3, masks with 2 (`moveq #2,%d2` at 0x400bcf1e, the amp bit cleared), stores to the live sound's +0x6c and notifies through vtable +0x10 with change info 0x401cb5dc. Callers: the menu's change handler and the parameter-message dispatcher (0x4010339c). Mod 0015 widens the mask to 3."
+
+[fn.env_reset_menu_change]
+addr = 0x400ef83a
+status = "verified"
+note = "ENV RESET's std::function invoker in SoundSetupMenuView: env_reset_set(sound, env_reset_get(sound) + 2 * delta) for the selected track, 0..11 only. The doubling, `addl %d3,%d3` at 0x400ef86a, is why stock steps OFF <-> FILTER; mod 0015 makes it a nop. Its label invoker is 0x400ee168, its value draw 0x400ef798."
+
+[data.env_reset_labels]
+addr = 0x401e8ecc
+status = "verified"
+note = "ENV RESET's four value labels, indexed by value & 3: OFF, AMP, FILTER, AMP+FILT."
+
+[data.engine_sound_settings]
+addr = 0x8000ea00
+status = "verified"
+note = "The engine's per-track copies of the live sound's settings bytes, 12 bytes each, written by the sound push at 0x4011f5d6: +0x68 (machine) at 0x8000ea00[t], +0x69 at 0x8000ea0c, +0x6a at 0x8000ea18, +0x6b at 0x8000ea24, +0x6c (ENV RESET) at 0x8000ea30. 0x8000ea30's only engine reader is the filter envelope builder."
+
+[fn.filter_env_commands]
+addr = 0x4010d090
+sig = "void(VoiceControl *block)"
+status = "verified"
+note = "Called each interrupt with the analog voice control block 0x800063c0. Per physical voice: track from 0x40290dd8, the track's effective slice from sound index 25 (0x8000f7da + 84 * track: env depth, FILTER ATK/DEC/SUS/REL, frequency, resonance, type), a six-state machine at 0x42fb49b4 + 32v with a counter at 0x42fb49b8 + 32v, and one 8-byte segment command into the block at +296 + 8v. The trig's attack command carries nibble ((ENV_RESET * 2) & 4) + 11 in bits 28..31: 0xB, or 0xF with the filter bit - the amp bit is dropped."
+
+[fn.amp_env_commands]
+addr = 0x401098d4
+sig = "void(VoiceControl *block)"
+status = "verified"
+note = "Called each interrupt after filter_env_commands. Per physical voice writes the VCA gain words (+10, +26) and overdrive (+42), and runs the amp envelope: state at 0x41329b54 + 32v (hold counter at +4), started by the trig flag 0x8000e508[track], reading AMP ATK/HLD/DEC from 0x8000f7ea + 84 * track. Each state sends a rate word and a level word to +168/+172 and again to +232/+236. See re/subsystems/envelopes.md."
+
+[data.amp_env_attack_cmd]
+addr = 0x40109b04
+status = "verified"
+note = "amp_env_commands, state 0 (the trig): `oril #0xb0000000,%d0` over the attack coefficient, the level word 0x4000007f already in d2, d3 the voice. Mod 0015 detours here."
+
+[data.amp_env_attack_resume]
+addr = 0x40109b0a
+status = "verified"
+note = "amp_env_commands state 0 past the oril, where mod 0015 rejoins."
+
+[data.amp_env_rate_tables]
+addr = 0x401ee36c
+status = "verified"
+note = "Three 128-entry tables of longs, 20 bits used, indexed by the knob value: decay at 0x401ee36c, hold at 0x401ee56c (a tick count the hold state compares a counter against, +16 per interrupt), attack at 0x401ee76c. Attack and decay are one-pole coefficients: 0 is instant, 0xfe8b2 (ATK 127) the slowest."
+
+[data.voice_owner_track]
+addr = 0x40290dd8
+status = "verified"
+note = "Bytes, per physical voice 0..7: the track that owns it now. Both envelope builders and the VCA writer index their track data through it (see compressor-hardware.md for the logical-to-physical table)."
+
+# ------------------------------------------------ machines
+# See re/subsystems/machines.md.
+
+[data.machine_engine_table]
+addr = 0x4029037c
+status = "verified"
+note = "53 function pointers, one per machine, called once per interrupt per physical voice as fn(voice, voice_control_block, params, pitch). params is 0x8000f7ba + 84 * track (sound index 9: the eight SRC words, locks and LFO applied). Data follows the table, so it cannot grow in place."
+
+[data.machine_dispatch]
+addr = 0x401210ee
+status = "verified"
+note = "The audio interrupt's per-voice machine lookup: owner track from voice_owner_track, machine from engine_sound_settings, voice skipped when the machine is above 52, else machine_engine_table[machine] is called at 0x401211d6."
+
+[data.machine_names]
+addr = 0x401befa4
+status = "verified"
+note = "Per machine a long-name and a short-name pointer, 8 bytes a machine, 0..52. 42's long name reads RS FM 2; its short name S2FM and its parameters are SD FM's."
+
+[data.machine_voice_mask]
+addr = 0x401bf17c
+status = "verified"
+note = "Two bytes per machine: home track (signed, -1 none), then a bitmask of the physical voices it may run on. Machines 34..52 have mask 0, which is all that hides them."
+
+[data.track_default_machine]
+addr = 0x401bf14c
+status = "verified"
+note = "12 longs, per track: the machine a fresh sound gets. Read by 0x40007130."
+
+[data.track_physical_voice]
+addr = 0x401bf1e8
+status = "verified"
+note = "12 longs, per track: its physical voice. BD 0, SD 2, RS 7, CP 7, BT 1, LT 3, MT 5, HT 5, CH 4, OH 4, CY 6, CB 6. Read by 0x4000716e."
+
+[fn.machine_available]
+addr = 0x400070e6
+sig = "int(int machine, int voice)"
+status = "verified"
+note = "Bit voice of machine_voice_mask[machine]; 0 for machine > 52 or voice > 7. Checked by the machine list, the setter 0x400bd18e, the sound push 0x4011f5c8, the sound pool 0x401201c6/0x40120596 and the kit load 0x400086d4."
+
+[fn.machine_home_track]
+addr = 0x40007116
+sig = "int(int machine)"
+status = "verified"
+note = "The signed home-track byte of machine_voice_mask; -1 for machine > 52."
+
+[fn.track_physical_voice_get]
+addr = 0x4000716e
+sig = "int(int track)"
+status = "verified"
+note = "track_physical_voice[track]; -1 for track > 11."
+
+[fn.machine_list_build]
+addr = 0x400beb62
+sig = "vector<int>(int track)"
+status = "verified"
+note = "The picker's list for a track, over machines 0..52 available on its voice: those whose home is the track, then those homed elsewhere, then those with no home, the groups sorted and separated. Called from the MachineListView constructor 0x400def0a."
+
+[data.kit_load_machine_fallback]
+addr = 0x40008708
+status = "verified"
+note = "The kit loader, per track: a sound whose machine is not available on the track's voice is set to 27, DISABLE. So a kit using a hidden machine loads as DISABLE on stock."
+
+[data.voice_control_block]
+addr = 0x800063c0
+status = "verified"
+note = "The analog voices' control block, one for all voices, each at its own offsets: oscillator words from +90, switch bits from +0xa0, segment-command slots from +168. The TEST machines map most of it; see machines.md."
+
+[data.voice_digital_buf]
+addr = 0x80006bf8
+status = "verified"
+note = "Per voice v at +128v, 32 longs: a machine's own waveform for the block (UT IMPULSE, FUNC. GEN.), summed by voice_output_mix."
+
+[data.voice_noise_gain]
+addr = 0x80007000
+status = "verified"
+note = "Per voice v at +8v: the noise gain, ramped across the block by voice_output_mix."
+
+[data.voice_noise_buf]
+addr = 0x80007040
+status = "verified"
+note = "Per voice v at +128v, 32 longs: the noise noise_generate writes, scaled by voice_noise_gain in voice_output_mix."
+
+[data.voice_machine_state]
+addr = 0x8000fef8
+status = "verified"
+note = "Per voice v at +32v: the running machine's state. Word 0 is commonly the first-call or trig flag."
+
+[data.voice_switch_bits_bd]
+addr = 0x401f5f6c
+status = "verified"
+note = "Voice 0's seven switch bits, bit numbers from voice_control_block +0xa0. BD TEST and BD HARD use the same entries. voice_switch_bits_sd (voice 2) and voice_switch_bits_rs (voice 7) are the same layout."
+
+[data.voice_switch_bits_sd]
+addr = 0x401f5f50
+status = "verified"
+note = "Voice 2's seven switch bits; see voice_switch_bits_bd."
+
+[data.voice_switch_bits_rs]
+addr = 0x401f5f34
+status = "verified"
+note = "Voice 7's seven switch bits; see voice_switch_bits_bd."
+
+[data.machine_pitch_cache]
+addr = 0x42fb6a78
+status = "inferred"
+note = "Where the public BD/SD/RS machines keep the last TUN and pitch with the result, so the exponential conversion runs only on a change; the result goes to 0x40290350. The \"2\" variants have none."
+
+[fn.voice_trig_reset]
+addr = 0x4011e456
+sig = "void(int voice, VoiceControl *block)"
+status = "verified"
+note = "Per-voice switch on the voice, 0..7: clears and resets that voice's control words and segment slots. Called by the machines on a trig."
+
+[fn.noise_generate]
+addr = 0x4011bc4e
+sig = "void(long *out, const short *preset, int voice)"
+status = "verified"
+note = "Fills a voice's 32-frame noise buffer, EMAC, from a four-word preset through per-voice filter state at 0x80007e20 + 44 * voice."
+
+[fn.pitch_tune_bipolar]
+addr = 0x4011e844
+sig = "int(int tun, int pitch)"
+status = "verified"
+note = "2/3 * (tun << 13) + 2/3 * (pitch << 5) - 0x0a555555: the public machines' TUN, range 32..96."
+
+[fn.pitch_tune_unipolar]
+addr = 0x4011e814
+sig = "int(int tun, int pitch)"
+status = "verified"
+note = "1/3 * (tun << 13) + 2/3 * (pitch << 5) - 0x07aaaaaa: the \"2\" variants', BT's and LT TEST's TUN, range 0..127. Equal to pitch_tune_bipolar at tun 64."
+
+[fn.pitch_to_cv]
+addr = 0x4011e86e
+sig = "int(int logfreq)"
+status = "verified"
+note = "Clamps the log-frequency word and tail-calls the exponential converter 0x4009897c."
+
+[fn.exp_convert]
+addr = 0x4009897c
+sig = "unsigned(unsigned logfreq)"
+status = "verified"
+note = "2^x by table: bits 23..13 index the table at 0x401d9328, bits 12..0 interpolate to the next entry, the top byte is the shift. 0x1000000 is an octave."
+
+[fn.osc_trim_write]
+addr = 0x40119788
+sig = "void(int voice, int osc, int wave, int word, int threshold, char force, long *out)"
+status = "verified"
+note = "Writes an oscillator's trim pair (frame +844/+860/+876, +4 for osc 1) for voice 0, 2 or 7. When the frequency word moves by more than threshold, wave changes or force is set: from the calibration table at 0x42fb4b88 (ten breakpoints at 0x42fb4d68, indexed by osc_cal_set, voice, wave and osc) when loaded, else three bands via osc_trim_band. See machines.md."
+
+[fn.osc_trim_band]
+addr = 0x40118f90
+status = "verified"
+note = "osc_trim_write's fallback: picks one of three bands by thresholds at 0x42fb69e8 and returns that band's trim from 0x42fb4ac8 through %a0."
+
+[fn.osc_cal_set]
+addr = 0x40119070
+sig = "int(void)"
+status = "verified"
+note = "The oscillator calibration set in use: 0x4029034c, or 0x419ca0b4 when that is negative."
+
+[fn.balance_linear]
+addr = 0x40109810
+sig = "long long(int bal)"
+status = "verified"
+note = "BAL to a complementary linear pair returned in d0/d1, both negative; callers negate. SD CLASSIC, RS CLASSIC."
+
+[fn.balance_clamped]
+addr = 0x40109848
+sig = "long long(int value)"
+status = "verified"
+note = "A clamped complementary pair in d0/d1. CY CLASSIC and CY METALLIC TON, SD NATURAL, SY DUAL VCO and SY RAW BAL."
+
+[fn.click_level]
+addr = 0x4011e9d8
+sig = "int(short amount, short lev)"
+status = "verified"
+note = "(amount * lev)^2, the starting level of a machine's click in its waveform buffer."
+
+[fn.segment_length]
+addr = 0x4011e802
+sig = "int(unsigned coefficient)"
+status = "inferred"
+note = "0x4011e714(0x10945, coefficient): the time a segment with this rate coefficient takes, in the units of a machine's state countdown. The machines add it to the countdown after starting a decay."
+
+[fn.segment_rate]
+addr = 0x4011e7ae
+sig = "unsigned(int level, int duration)"
+status = "inferred"
+note = "A rate coefficient for a ramp over duration: shift count in bits 19..16, mantissa below; 0xfffff for duration 0. OH METALLIC's first segment."
+
+[fn.hat_bank_write]
+addr = 0x4011e9ea
+sig = "void(long words[6], int mode, int tun, int pitch, const long ratios[6], unsigned flags, int reset)"
+status = "verified"
+note = "Six oscillator words for voice 4 (+616) or 6 (+640): exp of tun and pitch times each ratio, clamped to 22 bits, ORed with mode << 22, flags & 0x7f000000 and reset << 31. Ratio tables in machines.md."
+
+[fn.clap_noise]
+addr = 0x4011bd70
+sig = "void(long *wave_out, long *noise_out, int voice, int ton)"
+status = "verified"
+note = "CP CLASSIC's noise: generates and filters noise in SRAM at 0x80007d44, then a tone filter whose coefficient is 0x40228a64[ton >> 8], into voice 7's waveform and noise buffers."
+
+[fn.chip_step_offset]
+addr = 0x40119f54
+sig = "int(int step, const short *params)"
+status = "verified"
+note = "SY CHIP's arpeggio offset for step 1..3: (OF2, OF3 or OF4 - 0x4000) << 8; 0 otherwise."
+
+[fn.machine_bt_improved]
+addr = 0x4011b278
+status = "verified"
+note = "Machine 34, hidden. BT CLASSIC's tuning, decay, snap and pulse, without SWD or its sweep; noise gain (NOL * LEV)^2; a block counter from the trig (0x8000ff2c) that adds to the decay word after 4500 blocks and to the pitch word after 9000; a kill state at LEV 0; and no clearing of voice 1's digital buffer."
+
+[fn.machine_func_gen]
+addr = 0x4011425c
+status = "verified"
+note = "Machine 43, FUNC. GEN., hidden. Digital only: a free-running sine (SLV, SFQ) added into voice_digital_buf, noise at NOL, and one rectangular pulse (PLV, PLN) on the first call. Never touches the control block or looks at trigs."
+
+[fn.machine_bd_test]
+addr = 0x4011daf2
+status = "verified"
+note = "Machine 44, hidden. Writes voice 0's circuit controls raw: TU1/TU2 +90/+92, LE1/LE2 +94/+96, WF1/WF2/FM/RM through voice_switch_bits_bd."
+
+[fn.machine_sd_test]
+addr = 0x4011d288
+status = "verified"
+note = "Machine 45, hidden. Voice 2: TU1/TU2 +98/+100, LE1/LE2 +102/+104, WAV and FRO Gray-coded into +164/+167."
+
+[fn.machine_rs_test]
+addr = 0x4011d40c
+status = "verified"
+note = "Machine 46, hidden. Voice 7: TU1/TU2 +106/+108, LE1/LE2 +110/+112, RS1/RS2 +114/+116, WAV and FRO into +160/+163/+167."
+
+[fn.machine_bt_test]
+addr = 0x4011df00
+status = "verified"
+note = "Machine 47, hidden. Voice 1: TUN +118, DEC +120, BIT +165 bit 3, PL ramped into output-ring channel 8."
+
+[fn.machine_lt_test]
+addr = 0x4011e898
+status = "verified"
+note = "Machine 48, hidden. Voice 3: pitch from TUN +122, +124 from a counter at 0x40290378, PL into output-ring channel 9. DEC is not read."
+
+[fn.machine_mt_test]
+addr = 0x4011de10
+status = "verified"
+note = "Machine 49, hidden. Voice 5: TUN +126, DEC +128, PL into output-ring channel 10."
+
+[fn.machine_hh_test]
+addr = 0x40114460
+status = "verified"
+note = "Machine 50, hidden. Voice 4: TUN +130, VCA +140; SEL opens one of four outputs (+132..+138, slots +456..+480) and loads one of three six-word oscillator sets at +616..+636."
+
+[fn.machine_cy_test]
+addr = 0x4011d5b4
+status = "verified"
+note = "Machine 51, hidden. Voice 6: TUN +142, five envelope CVs +144..+152, VCA +158; SEL loads six oscillator words at +640..+660, the same sets HH TEST uses."
+
+[fn.machine_cb_test]
+addr = 0x4011d8b0
+status = "verified"
+note = "Machine 52, hidden. Voice 6: SEL loads two oscillator words at +640/+644, 5EN/8EN +154/+156, VCA +158."
+
+# ------------------------------------------------ analog control frame
+# See re/subsystems/analog-controls.md.
+
+[fn.control_frame_send]
+addr = 0x4007a538
+sig = "void(VoiceControl *block)"
+status = "verified"
+note = "Called once an interrupt at 0x40121464 with voice_control_block, after every writer. Copies its 492 words into the DMA buffer 0x80004800 + 2064 * buf (buf toggled in 0x417e38ac): header 0x8000aaaa, each word as 0x8001wwww, trailer 0x08005555, bit 26 set in the first data long."
+
+[fn.control_frame_dma_start]
+addr = 0x4007a5c6
+status = "inferred"
+note = "Writes the current frame buffer's address + 12 to 0xfc0451e0 and sets bits in 0xfc03c000 and 0xfc03c02c, after waiting on 0xfc03c02c bit 28 (0x4007a5b2): starts the frame's transfer."
+
+[fn.control_frame_defaults]
+addr = 0x4011eaf6
+status = "verified"
+note = "Clears the 0x3d8-byte frame and writes its defaults, then calls filter_cal_build and 0x40121890. From the audio startup 0x4011fa8e and the calibration paths 0x40109130 and 0x4010cd84. The only writer, with the calibration code, of frame +664..+779 and +892..+983."
+
+[fn.control_frame_cal_init]
+addr = 0x4010879a
+status = "verified"
+note = "The calibration flow's frame set-up: clears the 0x3d8-byte frame and writes it for calibration (compressor-hardware.md)."
+
+[fn.master_controls_write]
+addr = 0x4010e1a0
+sig = "void(VoiceControl *block, short *compParams)"
+status = "verified"
+note = "Called at 0x4012132c with the compressor's live parameters 0x8000fbd4, after 0x40121326 stores DIST amount * 2 in frame +0. Writes +2 = 0x3000 - THR / 2, +4..+8 from the other compressor parameters, and bits in +162 and +165."
+
+[data.filter_cal_coeffs]
+addr = 0x419c9f14
+status = "verified"
+note = "Per voice v at +8v, two longs: the coefficients filter_env_commands multiplies the cutoff by for frame +780 + 4v and +782 + 4v. Built by filter_cal_build."
+
+[fn.filter_cal_build]
+addr = 0x4010cf88
+status = "verified"
+note = "Fills filter_cal_coeffs from the calibration object 0x400fade6 returns, or from the defaults at 0x401ef190 when its +16 word is 0."

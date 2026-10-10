@@ -1,0 +1,31 @@
+[mod]
+id      = "0008-filter-hz"
+title   = "Filter frequency shown in Hz"
+
+enabled = true
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+The FILTER page's FRQ value popup reads as the cutoff frequency, to three
+significant figures - 13.8Hz at 0, 440Hz at 60, 1.11kHz at 76, 21.1kHz at 127 -
+instead of 0..127. The cutoff is one semitone a step with 440 Hz at 60, measured
+on the self-oscillating filter in LP2 at every 4th value from 16 to 116. That the
+other filter types share the scale is assumed, not measured. The value is the
+knob's: envelope depth and LFO modulation are not included.
+
+Hooks param_value_text where it hands the value to the record's formatter, after
+stock's validity check, so every popup that shows id 47 changes and no other
+parameter does.
+"""
+
+[sources]
+stub = "stub.s"
+
+[requires]
+shared = false
+symbols = [
+  "param_value_text_invoke",
+  "param_value_text_invoke_resume",
+]

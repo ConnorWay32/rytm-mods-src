@@ -1,0 +1,36 @@
+[mod]
+id      = "0015-env-reset-amp"
+title   = "ENV RESET reaches AMP and AMP+FILT"
+
+enabled = true
+
+# The bit probe sits in cave13, one of the pools 0011's fill covers.
+excludes = ["0011-batch-probe"]
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+ENV RESET in SOUND SETTINGS reaches AMP and AMP+FILT: with the amp bit set, the
+amp envelope restarts from silence on every trig instead of continuing from its
+current level, so AMP ATK is heard on every hit.
+
+ENV RESET lives in the live sound's +0x6c (bit 0 amp, bit 1 filter), labelled
+OFF, AMP, FILTER, AMP+FILT. Stock refused the amp bit three times: the menu steps
+by two, the setter masks with 2, and the engine never uses it. Two patches make
+the step one and the mask 3. The amp envelope runs in the voice hardware, fed
+segment commands by 0x401098d4; a detour on the trig's attack command sends, for
+a track with the amp bit, stock's decay form at DEC 0 - straight to -128 - and
+the hold states that follow ramp up from there at the ATK rate. A new trig on a
+sounding voice can click; that is the option's trade.
+
+bit_probe builds the experiment that found the drop instead (stub.s).
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# 1 = AMP OVR selects a bit to flip in the amp envelope's attack command, and
+# overdrive is silenced (stub.s has the map). Diagnostic only; keep at 0 to ship.
+bit_probe = 0

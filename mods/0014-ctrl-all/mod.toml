@@ -1,0 +1,38 @@
+[mod]
+id      = "0014-ctrl-all"
+title   = "CTRL ALL: TRK + knob turns that parameter on every sound track"
+
+enabled = true
+
+# cave13 is one of the pools 0011's fill covers; the two never share an image.
+excludes = ["0011-batch-probe"]
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+Holding TRK while turning a knob on a sound or TRIG page applies the same step to
+that parameter on tracks 1..12, so their differences are kept. A SYNTH knob applies
+by position: each track gets the step on the same machine slot, clamped to the
+selected machine's range. Stock handles the turn alone - one track, as before -
+with the FX track selected, with any trig key held, and on any page whose set is
+not a sound or trig set.
+
+A detour at the end of param_apply_delta's gate chain, after 0002, 0003, 0004 and
+0013, so parameters those mods handle stay single-track. Each track's set comes
+from the page's own getter and each write goes through its own delta handler, so
+storage and the display see ordinary edits.
+"""
+
+[sources]
+stub = "stub.s"
+
+[requires]
+shared = false
+symbols = [
+  "is_key_held",
+  "KEY_TRK",
+  "SOUND_PARAM_SET_VT",
+  "TRIG_PARAM_SET_VT",
+  "param_apply_delta_dispatch_resume",
+]

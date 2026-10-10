@@ -1,0 +1,51 @@
+[mod]
+id      = "0003-velocity-humanise"
+title   = "Per-track random velocity offset"
+
+enabled = true
+
+# re-only | built | hardware-verified | retracted
+status  = "built"
+
+# Requires 0002-euclid-accents: the amount lives in bits 2..5 of the euclid-enable
+# byte, and only 0002 persists those bits and masks them out of every euclid read.
+# The build has no dependency mechanism, so this is enforced by hand.
+
+summary = """
+Per track, stored beside VEL in the pattern: every trig's velocity gets a random
+offset of up to +-N, clamped to 1..127. N is one of 16 steps - 0, 1, 2, 3, 4, 6, 8,
+10, 12, 16, 20, 24, 32, 40, 48, 64 - set with FUNC + the VEL knob on the TRIG page.
+While FUNC is held the dial becomes a sixteen position selector for N - the settings
+sit on sixteen evenly spaced stops, so every turn of the knob moves the needle the same
+distance - the value popup shows N, and the label reads RND.
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# 1 = fill the rest of the claim with a canary pattern, and while FUNC is held
+# make the VEL popup show how many canary words have changed (0 = intact) instead of
+# the amount. For promoting cave2 to verified; keep at 0 otherwise.
+# 2 = the same readout, counting the cave3 pool that 0005-cave3-canary fills, and
+# placing no pattern here. For promoting cave3.
+# 3 = show 0007-cave-probe's entry counter, which is a different question: not
+# "was this written" but "was this ever entered". For promoting cave4, cave5 or
+# cave6, where a canary proves nothing because nothing writes .text.
+# Mode 1 no longer fits: its 1520 B fill needs a claim that size, and this one is
+# 0x200. It did its job - cave2 is verified as far as one session can - so widen the
+# claim by hand if it is ever needed again.
+diag_canary = 0
+
+[requires]
+shared = true
+symbols = [
+  "trig_fire",
+  "trig_fire_vel_resume",
+  "param_apply_delta_body",
+  "project_singleton",
+  "current_track_pattern",
+  "param_value_text_body",
+  "param_short_name_body",
+  "vel_get_stock",
+]

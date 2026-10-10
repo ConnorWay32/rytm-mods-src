@@ -1,0 +1,52 @@
+[mod]
+id      = "0009-main-rms"
+title   = "Main output RMS indicator on the compressor VOL label"
+
+enabled = true
+
+# The cave7 probe fills the same pool.
+excludes = ["0007-cave-probe"]
+
+# re-only | built | hardware-verified | retracted
+status  = "built"
+
+summary = """
+On both compressor pages - stock's and 0006's preview - the VOL knob's label draws
+inverted while the main output's RMS level is over rms_db, for gain staging.
+
+The level is the louder of MAIN L and R, each a mean square averaged with a 300 ms
+time constant; a full-scale square wave reads 0 dBFS and a full-scale sine -3.01.
+The label turns on above the threshold and off 1 dB below it. MAIN is read each
+audio interrupt from the receive buffer - the pair USB and the sampler record,
+after the compressor. The master volume knob does not set that pair, though an
+interaction in the circuit moves it by up to a few dB over the knob's travel.
+
+The label is inverted by XOR in the box stock highlights labels with, so a label
+stock has already highlighted reads normal while over. The drawing reaches the
+compressor view only: its vtable's two knob draw slots point at wrappers, which run
+stock's draw and then the inversion.
+
+Began as a clip indicator (any MAIN sample at -0.07 dBFS). Measured 2026-09-26, the
+Rytm's USB MAIN showed no saturation at any compressor VOL - no pile-up at the
+ceiling, no flattened peaks, no added harmonics - and the audible distortion was
+the monitoring interface's input, so a level reference for gain staging replaced
+it. Hardware, 2026-09-26: the drawing path inverts the label on both pages.
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# The threshold, whole dB RMS on the convention above, 0 to -60.
+rms_db = -18
+
+[requires]
+shared = false
+symbols = [
+  "audio_rx_filled",
+  "audio_rx_filled_resume",
+  "knob_draw",
+  "knob_draw_alt",
+  "fill_rect",
+  "comp_view_knob_draw",
+]

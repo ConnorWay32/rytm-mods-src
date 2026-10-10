@@ -1,0 +1,2309 @@
+# Single source of truth for every scarce resource a mod can claim.
+#
+# All claims live here rather than in the individual mod.toml files, so that a
+# collision between two mods is always a one-file diff. tools/layout.py asserts
+# that no two claims overlap and that every claim sits inside its pool.
+#
+# owner = the mod directory name, or "reserved:<reason>".
+
+[meta]
+target = "OS1.73"
+
+# ---------------------------------------------------------------------- pools
+
+[[pool]]
+name   = "cave"
+start  = 0x402cc920
+end    = 0x402cd000          # exclusive; 1760 B
+status = "verified"
+note   = """
+Verified on hardware 2026-09-16: mod 0001 put read-only strings here, and the
+MICRO TIMING menu still read them correctly after the unit had been run. The region
+is padding, not .bss, and later mods may put code and state here.
+
+Found by `make cavescan` on this exact image, not inherited from
+anyone's survey - there is no octamax equivalent for the Rytm.
+
+Why this run and not a larger one: it is the only long zero run that ends the CODE
+section. The 48 bytes before 0x402cc91c disassemble as ColdFire and finish on an
+`rts` (4e75), and the bytes after the run are UTF-16 string data ("Analog Rytm MKII
+MIDI"), so this is alignment padding between .text and .rodata. The two much larger
+runs the scan reports - 0x402cd89c +24452 and 0x402d4795 +21611 - sit between
+pointer and float tables near the end of the image, which is exactly where a .bss
+section would be placed, and .bss is written at runtime. That is the trap
+octatrack-mods hit with its patch_ram pool: a region that scans as free on a stopped
+machine and is overwritten the moment the engine runs.
+
+The scan cannot tell padding from .bss. Before the first mod ships, prove this
+region is untouched at runtime - fill it with a known pattern, flash, run the
+machine hard, and read it back - and only then change status to "verified".
+The run starts at 0x402cc91c; this pool starts 4 bytes later to keep claims aligned.
+"""
+
+[[pool]]
+name   = "cave2"
+start  = 0x402cd8a0
+end    = 0x402ce000          # exclusive; 1888 B
+status = "probably-verified"
+note   = """
+Alignment padding between the last read-only data and the SRAM load image.
+
+Hardware, 2026-09-19: 0003 ran from here with a 1520 B canary (380 words of
+0xc0def00d) filling the rest of the pool. A diagnostic arm counted changed canary
+words; the count read 0 straight after boot and still read 0 after a long session of
+normal use, and 0003 kept working throughout. "Probably" because one session is not
+exhaustive: paths nobody exercised, such as firmware transfer or factory test modes,
+were not covered.
+
+Evidence, all static:
+- 0x402cd89c..0x402ce000 is 1892 B of zeros. The pool starts 4 bytes in, to keep
+  claims aligned.
+- The data just below is the C++ static-constructor table: count 146 at 0x402cd650
+  and entries at 0x402cd654. The walker at 0x40100682 runs by count, not to a null,
+  so the table ends at 0x402cd89c and nothing reads past it.
+- Nothing in the image references an address in the gap. No code immediate and no
+  32-bit data word points into 0x402cd660..0x402ce000; the highest reference in
+  0x402cd000..0x402ce000 is the table itself, at 0x402cd654.
+- 0x402ce000 is where the SRAM load images begin. The startup routine at 0x400007e4
+  copies 0x402ce000..0x402d6000 to SRAM 0x80000000 and 0x402d6000..0x402ddff8 to
+  0x80008000. The gap is below the first copy, and nothing else writes it.
+
+This is why the large runs cavescan reports above 0x402ce000 (0x402cd89c +24452 past
+this gap, 0x402d4795 +21611 and the 7 KB tail) are NOT free. They are the SRAM
+sections' initial contents. The tail becomes the parameter arrays at 0x8000e434+.
+
+Read-out caveat, found 2026-09-21 while adding mode 3: until then the diagnostic
+answered the raw count, and vel_text_gate turns a dial value back into one of sixteen
+amounts, so counts of 1..4 all printed as "0". The reading above therefore means
+"fewer than 5 words changed", not "exactly none". It does not overturn the result - a
+live .bss region would have shown far more than four changed words, and the popup
+would have read a large amount - but it is weaker than the note claimed. 0003 now
+answers the stop for index min(count, 15), so any non-zero count reads non-zero; a
+re-run would give the exact-zero evidence this never had.
+
+"""
+
+[[pool]]
+name   = "cave3"
+start  = 0x40289ab8
+end    = 0x40289eb8          # exclusive; 1024 B
+status = "probably-verified"
+note   = """
+1024 B of zeros between two float tables, found by `make cavescan` on this image.
+
+Hardware, 2026-09-19: 0005-cave3-canary filled the pool with 256 words of
+0xc0def00d and 0003's diag_canary = 2 counted the words that no longer matched. The
+count read 0 after a session of normal use, and nothing sounded wrong - which also
+says the zeros are not read as table data, since the pattern would have replaced
+them with a large value. "Probably" for the same reason as cave2: one session is
+not exhaustive, and this pool is the weaker of the two on static evidence, because
+it sits inside the float-table region rather than at a section boundary.
+
+0003 now runs from here, which keeps testing it: if the region were live data, 0003
+would break visibly rather than silently.
+
+Evidence, all static:
+- 0x40289ab8..0x40289eb8 is 1024 B of zeros.
+- Nothing in the image points into the run. Every 32-bit word of the image was
+  scanned; the only targets in 0x40289400..0x4028a800 are 0x40289420, 0x4028942c,
+  0x40289490..0x402894b4, then 0x40289eb8, 0x40289fb8, 0x4028a1b8, 0x4028a5b8,
+  0x4028a7b4 and 0x4028a7b8. The run is bounded by two of them and contains none.
+- The tables after it are 256, 512, 1024 and 508 B, so table starts here are
+  referenced directly. An indexed read into the run would need a base inside it.
+- What keeps this unverified: the table before the run starts at 0x402894b4, which
+  is referenced, and 0x40289ab8 - 0x402894b4 = 1540 B. If that table is longer than
+  1540 B and simply decays to zero, the run is live data that reads as 0.
+
+Read-out caveat, found 2026-09-21 while adding mode 3: until then the diagnostic
+answered the raw count, and vel_text_gate turns a dial value back into one of sixteen
+amounts, so counts of 1..4 all printed as "0". The reading above therefore means
+"fewer than 5 words changed", not "exactly none". It does not overturn the result - a
+live .bss region would have shown far more than four changed words, and the popup
+would have read a large amount - but it is weaker than the note claimed. 0003 now
+answers the stop for index min(count, 15), so any non-zero count reads non-zero; a
+re-run would give the exact-zero evidence this never had.
+
+Rejected candidates from the same scan, for the record:
+- 0x4028afa8 +2064: code at 0x4010de0c and 0x4010df9a references its last 4 bytes,
+  and the data before it is a decaying curve table.
+- 0x402c7ab3 +305 and 0x40287a15 +262: inside mask and index tables, and too small.
+"""
+
+# ------------------------------------------------- the ceiling, and what is above it
+#
+# The startup code names the image's boundary outright, so it is no longer a
+# judgement call. `make cavescan` reads all six values back out of the image and
+# refuses to run if the opcodes around them have moved.
+#
+#   0x400007e4  copies 0x402ce000..0x402d6000 to 0x80000000, and
+#               0x402d6000..0x402ddff8 - the image's last byte - to 0x80008000.
+#               Two 32 KB SRAM load images.
+#   0x4000083a  zeroes 0x402ce000..0x42fbb250, 44.9 MB. __bss_start = 0x402ce000.
+#   Both are called from 0x400008c6 and 0x400008ca, copy first, clear second.
+#
+# So everything at or above 0x402ce000 is disqualified twice over: read once at boot
+# as initialiser data, then overwritten with zeros. That closes, permanently, the runs
+# cave1's note could only argue about - 0x402cd89c's 22,560 B above cave2, 0x402d4795
+# +21611, 0x402dad60 +4048, 0x402d3828 +3026, and the 7,108 B tail. It is also why
+# cave2's end address is exactly right rather than luckily right.
+#
+# The converse is worth more than the prohibition: NOTHING BELOW 0x402ce000 IS .bss.
+# The trap octatrack-mods hit with patch_ram - a region that scans free on a stopped
+# machine and is written the moment the engine runs - cannot apply to any pool here.
+# For cave3 that removes the runtime-write worry entirely; what is left of its
+# "what keeps this unverified" is only the question of whether the run is live table
+# data that happens to read as zero, which is a different and smaller risk.
+
+# ---------------------------------------------------------------- dead-code pools
+#
+# cave4..cave6 are a different KIND of space from cave1..cave3, and the difference
+# decides how they have to be proven.
+#
+# cave1..cave3 are filler: the question about them is whether anything WRITES them.
+# cave4..cave6 are whole routines inside .text that nothing calls: the question about
+# them is whether anything REACHES them. Nothing writes them - .bss starts above all
+# of .text, see above - so a canary is useless here, because a read-back will always
+# come back clean whether or not the region is live.
+#
+# They exist because the filler is gone. Below the ceiling there is no unclaimed run
+# left worth having: every long run of 0x00 or 0xff down there is table content, not
+# padding - `make cavescan` prints what points into each one. 0x4029fbcc +1040,
+# 0x402a4e80 +720 and 0x40287810 +512 are each referenced at their own start address,
+# so the run IS the object; 0x402c7f4a +878 has a pointer triple at 0x402c7e98
+# indexing into its middle; 0x402cb2f4 +308 is the tail of a mask table built from
+# 8-byte groups; 0x4027b9ca and 0x4027bd62, +396 each, sit 0x398 apart inside a
+# repeating 920-byte record.
+#
+# One trap governs this whole pass, and any future detour host as much as any cave.
+# A ColdFire switch compiles to `jmp %pc@(table,%dn:l)` over 16-bit OFFSETS, so an
+# arm's address appears nowhere in the image as a 32-bit value. Scanning for absolute
+# references alone reports live switch bodies as dead: the first run of this analysis
+# offered 0x4013d0de +1816, which is arm 1 of the 23-entry table at 0x4013d072.
+# There are 109 such sites in .text. cavescan resolves 82 and blacks out the other 27
+# across the full 64 KB a 16-bit offset can reach.
+#
+# What a region here had to survive to be listed:
+# - the instruction before it ends the flow, so nothing falls in;
+# - no 4-byte value at any even offset in the image points into it, and no address in
+#   it is printed as a disassembly operand anywhere outside it. Odd-offset matches are
+#   not references - a pointer or immediate is always even-aligned on this core;
+# - references from inside other dead regions do not count, resolved to a fixpoint.
+#   Dead routines call each other, and counting those would cut each one down to its
+#   first basic block;
+# - nothing in sections 1, 2 or 8 refers to it either.
+#
+# What keeps all three "candidate": unreachable is an argument, not an observation.
+#
+# Two of the three risks this note used to list are closed for these three pools, and
+# closed by measurement rather than by argument:
+# - The 27 unresolved jump tables cannot reach any of them. A 16-bit unsigned offset
+#   reaches 0xffff, and there is no unresolved table in that window below cave4, cave5
+#   or cave6. `make cavescan` blacks out those windows wholesale; here there is nothing
+#   in them to black out.
+# - The second code region at ~0x402ca000..0x402cc91c cannot reach them either. It sits
+#   1.1 MB above cave6 and 2.8 MB above cave4 and cave5, so no PC-relative call and no
+#   computed jump from it comes close; a `jsr %pc@(d16)` spans 32 KB. Its ABSOLUTE
+#   references were never a gap - the pointer scan steps every even offset across the
+#   whole image, that region included.
+#
+# The third risk, disassembly desync, was tested on 2026-09-21 and is clean near all
+# three pools. A linear pass that has lost sync decodes real function entries in the
+# middle of an instruction, so: every address anything treats as an entry must land on
+# an instruction boundary. Of 51,682 even referenced addresses in .text, 169 (0.33%)
+# do not, and only two of those are within 32 KB of any pool. Neither is a reference:
+# - 0x401b2d78 has exactly one match, at 0x40268cd2, which is 2-aligned rather than
+#   4-aligned and straddles two unrelated values inside a block of high-entropy data.
+#   A pointer table entry would be 4-aligned.
+# - 0x40030000 is a round memory-map constant with 11 matches, all in scattered rodata
+#   tables and none in code.
+#
+# Exception vectors are ruled out too, and they were never checked before: the MAIN OS
+# vector table is at 0x40000000 - below the load base - and 0x400014ae builds it as 256
+# identical entries pointing at one default handler, with VBR set at 0x400014cc. No
+# vector reaches a pool, and nothing writes a pool address into that table.
+#
+# So all five ways into a region are now excluded, for each pool:
+#   fall-through          the preceding instruction is rts or braw
+#   direct branch or call none anywhere in the image
+#   address from data     no even-aligned word in the image points into it
+#   computed pc jump      no table in range; cave6 has none within 64 KB at all
+#   copy then execute     still needs the address, and no instruction carries it
+#
+# How to promote one. NOT a canary. cave2 and cave3 were promoted by writing
+# 0xc0def00d and counting the words that changed, which answers "does anything write
+# here". For .text the answer is provably no, so that test comes back clean whether
+# the region is live or dead: it would look like evidence and be worth nothing.
+#
+# Detect ENTRY instead. Fill the pool so that entering it anywhere funnels to one
+# recorder: every even slot from the start holds 0x607e, `bra.s` with displacement
+# 0x7e, which lands on A+0x80, so any even entry walks forward in 128-byte steps; the
+# last 128 bytes hold a bra.s aimed straight at the recorder so no walk overshoots;
+# the recorder bumps a longword counter and returns. Entry at an odd address faults on
+# instruction fetch, which is itself a detection. The rts returns wrong for whoever
+# called, but it keeps the unit alive long enough to read the count, and misbehaviour
+# after it is more evidence, not less. The probe was mod 0007-cave-probe, not part of
+# this package.
+#
+# Flash the CONTROL build first, every time: same image, counter seeded to a non-zero
+# value by 0007's `preset`, one byte different. A probe that can only ever show one
+# reading proves nothing - a broken read-out path reads 0 and looks exactly like
+# "never entered". Confirm the popup shows the seed before any run counts.
+#
+# Then exercise the cold paths, because that is where the risk actually is. A routine
+# that survives compilation but is never called in normal use most likely belongs to
+# service mode, a test menu, an error handler or the OS upgrade - exactly the paths
+# cave2's note already admits were never covered. Normal use first, then provoked
+# error paths - bad SysEx, full pattern memory, USB and Overbridge connect/disconnect,
+# failed sample transfers - then factory and test modes.
+#
+# Run the OS-upgrade path LAST and on its own. It is the most likely home for a
+# genuinely uncalled routine and the worst place to be wrong, because failing mid
+# upgrade is how a unit bricks. Section 2 is the recovery path and nothing here ever
+# writes it (docs/HAZARDS.md), so recovery exists - but plan that run knowing it may
+# be needed.
+#
+# What the three routines ARE, established 2026-09-21. None references a string
+# itself, and the image carries no symbol table - the promising-looking (address,
+# name) pairs in rodata are 4e75 4e75, `rts rts`, read as text - but the
+# neighbourhoods settle it:
+# - cave6 sits 452 B after the thrower for "Future already retrieved", in the same
+#   block as std::future_error (0x4025d0fb) and "Broken promise". It is inside
+#   libstdc++'s std::future / promise machinery.
+# - cave4 and cave5 sit in a module that formats note names - "CCDDEFFGGAAB" and
+#   "%c%c%d" at 0x4023df95, used from 0x40029dd6 and 0x40029e22 - and that uses
+#   vector::_M_emplace_back_aux.
+#
+# This matters more than it looks. The worry driving the cold-path test order was that
+# a routine nobody calls belongs to service mode, an error handler or the upgrade
+# path, where ordinary use proves little. Compiler-emitted library code is the other
+# explanation, and it is the benign one: an unreferenced template instantiation is
+# unreachable by construction, not merely unvisited.
+#
+# Incidentally confirming it: the TEST MODE UI ("UI TEST (LED)", 0x4025cd3e) lives at
+# 0x4013dxxx, which the first run of this analysis wrongly offered as 1816 B of dead
+# code and the jump-table resolver correctly reclassified as arms of the table at
+# 0x4013d072. Test-mode code is accounted for, and it is not what is in these pools.
+#
+# NOTE: tools/layout.py POOL_OF does not list these names, so a claim against one
+# fails the layout check today. That is deliberate - it stays that way until a pool is
+# promoted past "candidate", so the first mod that reaches for this space has to go
+# through the hardware run rather than around it.
+
+[[pool]]
+name   = "cave4"
+start  = 0x40029060
+end    = 0x40029838          # exclusive; 2008 B
+# Not padding: this pool holds a routine. `stock = "code"` tells build.py to
+# check it against these exact bytes instead of against zero, so a wrong
+# address or a changed image fails the build rather than silently patching
+# live code.
+stock  = "code"
+expect_sha256 = "f7e944ee49e18d2af3a7eba0a4257a9a199a30d737f533d9a0d427b555a99f8a"
+status = "probably-verified"
+note   = """
+An unreachable routine, and the largest single run of free space in the image - it is
+bigger than cave2, and unlike every other pool here it is in .text, among the code
+that would call into it.
+
+Found by `make cavescan` on this exact image, which reports it as two regions,
+0x4002905e +802 and 0x4002954a +752, because the 458 B between them do not begin
+after a terminator. They are one routine. The whole span 0x4002905e..0x4002983a was
+then checked directly: 2012 B with no external reference of any kind. The pool starts
+2 bytes in and ends 2 bytes early to keep claims 4-byte aligned.
+
+Evidence, all static:
+- 0x4002905c is `rts`, so nothing falls into 0x4002905e.
+- 0x4002905e is a textbook prologue - `lea %sp@(-132),%sp` then
+  `moveml %d2-%d7/%a2-%fp,%sp@` - so this is a routine start, not a fragment.
+- No 4-byte value at any even offset in the image points anywhere into the span, and
+  no address in it appears as a disassembly operand outside it. The only two matches
+  in the whole image, 0x40106cab -> 0x40029442 and 0x4011e695 -> 0x40029420, are both
+  at ODD offsets, inside other instructions' encodings, and cannot be pointers.
+- The nearest computed jump table below it is at 0x4001f9ea, 0x9674 B away. A 16-bit
+  unsigned offset reaches 0xffff, so that table CAN span it - it resolves cleanly, and
+  none of its arms land here.
+- Sections 1, 2 and 8 contain no reference into it, big- or little-endian.
+
+The routine continues past 0x4002983a; the pool stops there because that is the first
+address in it that anything references, and there is no reason to argue past the
+boundary the scan can defend.
+
+Hardware, 2026-09-21: 0007-cave-probe filled the whole pool with the entry ladder and
+0003's diag_canary = 3 read the counter back. The count read 0 after a session of
+playback, pattern switching, and entering and leaving sample mode.
+
+The control ran first and is what makes that 0 mean anything: the same image with the
+counter seeded to 3 read 3 on the popup, so the read-out path was known good before
+the real run. The two images differ at exactly one byte, 0x402ccfab.
+
+"Probably" for the same reason as cave2 and cave3, and the list of what was not
+covered is longer here than the session suggests: no provoked error paths, no factory
+or test modes, no OS upgrade, and within normal use no actual sampling, no +Drive
+access and no Overbridge. What carries this pool is the static case, not the session -
+see the five routes ruled out in the dead-code preamble above, and the attribution.
+"""
+
+[[pool]]
+name   = "cave5"
+start  = 0x4002871c
+end    = 0x40028a14          # exclusive; 760 B
+# Not padding: this pool holds a routine. `stock = "code"` tells build.py to
+# check it against these exact bytes instead of against zero, so a wrong
+# address or a changed image fails the build rather than silently patching
+# live code.
+stock  = "code"
+expect_sha256 = "858656ddd5e9f1dd50a3ad1065e72f2884a20abb314dae0a73836ad4cbe61f9e"
+status = "probably-verified"
+note   = """
+A second unreachable routine, 0x2f8 B, in the same neighbourhood as cave4 and
+independent of it - neither references the other, so one being wrong does not make
+the other wrong.
+
+`make cavescan` reports 0x4002871a +762; the pool starts 2 bytes in for alignment.
+
+Evidence, all static: preceded by a terminator; no even-offset 4-byte value in the
+image points into it; no disassembly operand outside it names any address in it; no
+reference from sections 1, 2 or 8. The only computed jump table within 64 KB below it
+is 0x4001f9ea, the same one that spans cave4; it resolves to 15 arms, all of them in
+0x4001fa08..0x400200e2, and none lands here.
+
+Hardware, 2026-09-21: 0007-cave-probe filled the whole pool with the entry ladder and
+0003's diag_canary = 3 read the counter back. The count read 0 after a session of
+playback, pattern switching, and entering and leaving sample mode.
+
+The control is what makes that 0 mean anything, but it was run against the cave4
+image, not this one: ctrl4 - probe4 with the counter seeded to 3, differing from it at
+exactly one byte, 0x402ccfab - read 3 on the popup. It transfers because what it
+proves is the read-out path, and that path is shared: the counter is at 0x402ccfa8 in
+all three images and the 20-byte recorder is byte-identical in all three. What it does
+NOT prove is this image's own fill, so a control seeded against this pool would be
+strictly better evidence than what is recorded here.
+
+"Probably" for the same reason as cave2 and cave3, and the list of what was not
+covered is longer here than the session suggests: no provoked error paths, no factory
+or test modes, no OS upgrade, and within normal use no actual sampling, no +Drive
+access and no Overbridge. What carries this pool is the static case, not the session -
+see the five routes ruled out in the dead-code preamble above, and the attribution.
+"""
+
+[[pool]]
+name   = "cave6"
+start  = 0x401ba290
+end    = 0x401ba4e8          # exclusive; 600 B
+# Not padding: this pool holds a routine. `stock = "code"` tells build.py to
+# check it against these exact bytes instead of against zero, so a wrong
+# address or a changed image fails the build rather than silently patching
+# live code.
+stock  = "code"
+expect_sha256 = "505a028891af9816e6231a7af0a02ea273972548140b0196e517ebc389ab2fe5"
+status = "probably-verified"
+note   = """
+A third unreachable routine, 0x258 B, at the top of .text - 0x1808 B below the end of
+the code at 0x401bea90.
+
+`make cavescan` reports 0x401ba28e +602; the pool starts 2 bytes in for alignment.
+
+Evidence, all static: 0x401ba28c is `rts`; no even-offset 4-byte value in the image
+points into it; no disassembly operand outside it names any address in it; no
+reference from sections 1, 2 or 8. It is the cleanest of the three on the jump-table
+question - there is NO computed jump table anywhere in the 64 KB below it, so no
+switch can reach it even in principle.
+
+Not chosen, from the same scan, and why they are not pools yet rather than why they
+are bad: 0x40137a46 +558 and 0x401b70d8 +412 are a mutually-referencing pair - every
+reference to 0x401b70d8 comes from inside 0x40137a46 - so they stand or fall together
+and want one experiment covering both. 0x40025c00 +552, 0x401bcbec +352,
+0x401bb7b0 +335 and 0x4000f9ee +294 are sound on the same evidence and are simply
+surplus; `make cavescan` lists all 137 regions, 22,901 B in total, of which 17 are
+256 B or larger and come to 7,407 B.
+
+Hardware, 2026-09-21: 0007-cave-probe filled the whole pool with the entry ladder and
+0003's diag_canary = 3 read the counter back. The count read 0 after a session of
+playback, pattern switching, and entering and leaving sample mode.
+
+The control is what makes that 0 mean anything, but it was run against the cave4
+image, not this one: ctrl4 - probe4 with the counter seeded to 3, differing from it at
+exactly one byte, 0x402ccfab - read 3 on the popup. It transfers because what it
+proves is the read-out path, and that path is shared: the counter is at 0x402ccfa8 in
+all three images and the 20-byte recorder is byte-identical in all three. What it does
+NOT prove is this image's own fill, so a control seeded against this pool would be
+strictly better evidence than what is recorded here.
+
+"Probably" for the same reason as cave2 and cave3, and the list of what was not
+covered is longer here than the session suggests: no provoked error paths, no factory
+or test modes, no OS upgrade, and within normal use no actual sampling, no +Drive
+access and no Overbridge. What carries this pool is the static case, not the session -
+see the five routes ruled out in the dead-code preamble above, and the attribution.
+"""
+
+[[pool]]
+name   = "cave7"
+start  = 0x40137a48
+end    = 0x40137c74          # exclusive; 556 B
+# Not padding: this pool holds a routine. `stock = "code"` tells build.py to
+# check it against these exact bytes instead of against zero, so a wrong
+# address or a changed image fails the build rather than silently patching
+# live code.
+stock  = "code"
+expect_sha256 = "1051c271903716f5f4c7d70d3db86315dd0c58ceb23137b673e0f653771ecda4"
+status = "probably-verified"
+note   = """
+A fourth unreachable routine, one whole function: `linkw %fp,#-44` at 0x40137a46
+after the `rts` at 0x40137a44, to its own `rts` at 0x40137c70 and a pad word.
+`make cavescan` reports 0x40137a46 +558; the pool starts 2 bytes in for alignment and
+ends at the pad.
+
+What it is: it constructs a ControlInputParamDataChangeInfo (vtable 0x4023474c) and a
+ControlInputParamCopy (0x4023475c), and calls 0x401b70d8. Application code - a copy
+of control-input parameter settings nothing invokes - not a library instantiation
+like cave4, cave5 and cave6. That is the less benign explanation of the two in the
+preamble, which is why this pool wants its probe run before anything ships in it.
+
+Evidence, all static, 2026-09-26:
+- the preceding instruction is `rts`;
+- no 4-byte value at any even offset points into it, and no odd-offset match exists
+  either; no disassembly operand outside it names an address in it;
+- no reference from sections 1, 2, 5 or 8. The one match in the raw MAIN OS section
+  is little-endian at an odd offset in rodata (0x401c5545);
+- computed jumps: no unresolved table within 64 KB. The dispatches near it are
+  `movew %pc@(tbl,%d0:l),%d0; extl %d0; jmp`, whose offsets are SIGNED and so reach
+  32 KB downward as well - cavescan's resolver assumes unsigned and stops at the first
+  negative entry. So every table within 32 KB on either side (seven, all above it)
+  was over-read to 256 raw entries: no word in any of them lands here. The same test
+  on cave4, cave5 and cave6 is clean too;
+- desync: of 1,823 even referenced addresses within 32 KB, the ones off an
+  instruction boundary are jump-table entries (0x4013d07c.., 0x4013dd5c..,
+  0x4013e7e6.., 0x4013f5aa..) and one straddling match in a startup table
+  (0x401313c0 from 0x40000632), none of them a reference into this pool.
+
+0x401b70d8 +412 stands or falls with it - every reference to it comes from in here -
+but only this pool is claimed, and nothing outside it reaches this one, so probing
+this pool alone answers for it.
+
+Hardware, 2026-09-26: the control ctrl7 - probe7 with the counter seeded to 3,
+differing from it at exactly one byte, 0x402ccfab - read 3, a control seeded
+against this pool's own image. probe7 then read 0 after normal use, including the
+CONTROL IN menu's copy and paste, which copies the pattern and did not enter the
+routine.
+
+"Probably" for the same reasons as cave4, cave5 and cave6: no provoked error paths,
+no factory or test modes, no OS upgrade, and no sampling, +Drive or Overbridge
+recorded for the session. What carries it is the static case above.
+"""
+
+# --------------------------------------------------------------------- claims
+#
+# No claims yet. The shapes, for when there are:
+#
+# [[cave]]
+# owner = "0001-some-slug"
+# addr  = 0x402cc920
+# size  = 0x80                 # layout.py asserts the assembled stub fits
+# note  = "what lives here, including any state words the linker places"
+#
+# [[detour]]
+# owner  = "0001-some-slug"
+# addr   = 0x400xxxxx
+# size   = 6                   # jmp abs.l; the only supported form
+# expect = "..."               # stock bytes at the host, hex; the load-bearing guard
+# entry  = "stub_label"        # resolved from the linked ELF, never assumed
+# rejoin = 0x400xxxxx          # optional: where the stub jumps back, when it is not
+#                              # addr + the displaced length. "none" = handled here
+#                              # and returned. verify.py checks the stub jumps there;
+#                              # rejoining one instruction early runs it twice
+#
+# [[patch]]
+# owner   = "0001-some-slug"
+# addr    = 0x400xxxxx
+# size    = 4
+# expect  = "..."
+# replace = "..."              # or from_symbol = "label" for a 4-byte address
+
+# ----------------------------------------------------------- 0000-shared
+
+[[cave]]
+owner = "0000-shared"
+addr  = 0x402ccebc
+size  = 0xec
+note  = "The shared runtime: the amount and dial-stop tables, the decimal formatter and the LCG draw. In cave1, in what 0002 leaves. The claim is the 236 B the stub actually emits; the 88 B beyond it now holds 0006's scratch. Every other enabled mod's stub is linked against the shared_ labels here, so moving this claim means reflashing all of them."
+
+# --------------------------------------------------- 0002-euclid-accents (phase 1)
+
+[[cave]]
+owner = "0002-euclid-accents"
+addr  = 0x402cc920
+size  = 0x59c
+note  = "Composite Bool Operator accessors, the eight-entry label table and four new label strings, the accent playback and bake, the euclid-byte persistence and mask. 1434 B used. 0001 is retracted and disabled, so its block is free; layout.py will flag the collision if anyone re-enables it."
+
+# The get-by-id and set-by-id switch arms. Only the 4-byte jsr TARGET is replaced,
+# at +2 of the instruction, so the arm's surrounding code is untouched.
+[[patch]]
+owner       = "0002-euclid-accents"
+addr        = 0x400a884e
+size        = 4
+expect      = "400c11b0"
+from_symbol = "boolop_get_ui"
+
+[[patch]]
+owner       = "0002-euclid-accents"
+addr        = 0x400a9cac
+size        = 4
+expect      = "400c11e0"
+from_symbol = "boolop_set_ui"
+
+# euclid_bool_op_format clamps the value to 0..3 twice before indexing the label
+# table. Both become 7, and the table pointer moves to ours.
+
+# --------------------------------------------------- 0002-euclid-accents (phase 2)
+
+# trig_fire's grid arm. The six bytes are `mvzw %a2@(0,%d0:l),%d2` plus the `bras`
+# to the join. The stub re-emits the load but REPLACES the branch with its own jmp
+# to the same target, so the displaced bytes do not appear verbatim - hence
+# reemit = false. Nothing else reaches these six bytes: the euclid arm is entered
+# by the bnes at 0x4009ab70, which lands past them.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x4009ab72
+size   = 6
+expect = "75f208006014"
+entry  = "trig_fire_accent"
+rejoin = 0x4009ab8c         # past the whole flag block, which the stub rebuilds
+reemit = false
+
+# euclid_bake's entry. Six bytes of jmp land across the `lea %sp@(-120),%sp` and the
+# first half of the moveml, so expect covers both instructions and the stub re-emits
+# them before jumping to euclid_bake_body.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x400c3c0e
+size   = 6
+expect = "4fefff8848d77cfc"
+entry  = "euclid_bake_gate"
+
+# Bit 1 of the euclid-enable byte is the accent flag, so both stock accessors are
+# replaced outright. The get must mask to 1 - euclid_generate tests for exactly 1 -
+# and the set must preserve bit 1, because the toggle handler calls set(p, 0) on
+# every turn-off, FUNC-held or not, and would otherwise clear the setting.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x400c0e02
+size   = 6
+expect = "2f0a246f0008"
+entry  = "euclid_enabled_get_masked"
+rejoin = "none"             # reads the byte and returns; stock's getter never runs
+reemit = false
+
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x400c0e32
+size   = 6
+expect = "598f2f0e2f0a"
+entry  = "euclid_enabled_set_keep"
+rejoin = "none"             # writes the byte itself, preserving bits 1..5, and returns
+reemit = false
+
+# The icon renderer clamps the value to 0..3 twice before indexing the icon set.
+[[patch]]
+owner   = "0002-euclid-accents"
+addr    = 0x400ff476
+size    = 2
+expect  = "7203"           # moveq #3,%d1
+replace = "7207"           # moveq #7,%d1
+
+[[patch]]
+owner   = "0002-euclid-accents"
+addr    = 0x400ff492
+size    = 2
+expect  = "7003"           # moveq #3,%d0
+replace = "7007"           # moveq #7,%d0
+
+# The Bool Operator icon set is built with a count of 4. Repointing this one call
+# lets the wrapper hand bitmap_set_make eight instead.
+[[patch]]
+owner       = "0002-euclid-accents"
+addr        = 0x40143126
+size        = 4
+expect      = "401b7cd0"
+from_symbol = "bitmapset8"
+
+# Range probe - diagnostic only, gated on probe_range. Six bytes of jmp land
+# across param_info's `movel %sp@(4),%d1` and the first half of the cmpi that
+# follows, so both are re-emitted.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x400ff556
+size   = 6
+expect = "222f00040c81000001d5"
+entry  = "param_info_probe"
+gate   = "probe_range"
+
+# Bool Operator's encoder, handled outright. param_apply_delta gets the delta
+# before the target dispatch that clamps, so for this one id the stub applies it
+# and returns; the stock clamp is never reached. Six bytes of jmp land across the
+# prologue's lea and the first half of the moveml, so both are re-emitted.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x400378a6
+size   = 6
+expect = "4feffff448d7040c"
+entry  = "param_delta_gate"
+
+# euclid_bool_op_format fills the transient text popup that names the value.
+# Its two clamps and its label table all stop at four; without these the popup
+# shows ERR for the new values.
+[[patch]]
+owner   = "0002-euclid-accents"
+addr    = 0x400ff3e0
+size    = 2
+expect  = "7203"           # moveq #3,%d1
+replace = "7207"           # moveq #7,%d1
+
+[[patch]]
+owner   = "0002-euclid-accents"
+addr    = 0x400ff3ea
+size    = 2
+expect  = "7003"           # moveq #3,%d0
+replace = "7007"           # moveq #7,%d0
+
+[[patch]]
+owner       = "0002-euclid-accents"
+addr        = 0x400ff3f6
+size        = 4
+expect      = "401ec400"
+from_symbol = "boolop_labels"
+
+# The value-name popup asks obj->vtable[0x24] to render the value and prints ERR
+# when it declines, which is what the four new values got - the label table is a
+# different path entirely. Intercept above the virtual for this one id.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x400a85e0
+size   = 6
+expect = "4fefffec48d70c1c"
+entry  = "boolop_text_gate"
+
+# Persistence of the euclid-enable byte's spare bits. pattern_track_save packs the
+# byte as (raw << 7) into one storage byte, dropping bits 1..7; pattern_track_load
+# reads bit 7 alone. Live bits 1..5 (accent, then four bits free for other mods)
+# ride in storage +0x279 bits 2..6, which stock ignores on load and zeroes on save.
+# Both stubs re-emit the displaced instructions verbatim.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x40008f62
+size   = 6
+expect = "712a02caef88"
+entry  = "pattern_save_accent"
+
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x40008cc4
+size   = 6
+expect = "d08091804480"
+entry  = "pattern_load_accent"
+
+# trig_fire's euclid test is `enabled == 1`. Masking the byte to bits 0..1 first
+# keeps accent tracks (3) on the grid path and stops other mods' bits 2..5 from
+# turning euclid off. The stub re-emits the byte load and the lea after it.
+[[detour]]
+owner  = "0002-euclid-accents"
+addr   = 0x4009aaca
+size   = 6
+expect = "102802ca43f37a00"
+entry  = "trig_fire_euclid_masked"
+
+# ------------------------------------------------ 0003-velocity-humanise
+
+[[cave]]
+owner = "0003-velocity-humanise"
+addr  = 0x402cdddc
+size  = 0x1b8
+gate  = "!diag_canary"
+note  = "In cave2, below 0004, having moved out of cave3 to leave that pool whole for 0006. The velocity stub, the FUNC+VEL amount gate, the VEL get-by-id hook and amount text, the change marker the amount gate calls, the label gate that answers RND while FUNC is held, a 4-byte LCG state written at runtime, the 16-entry amount and dial-stop tables and the RND string. The shipping build, with no diagnostic arm, is 438 B of the 440 claimed."
+
+# The diagnostic arm does not fit in 0x1b8 and has not for some time: mode 2 assembles
+# to 476 B and mode 3 to 452 B, against 440 claimed, so `diag_canary` did not build at
+# all until this claim was split. It was sized when the arm was smaller and the note
+# claiming it covered the arm went stale without anything catching it - the build only
+# checks the claim actually being assembled, and the shipping one always fitted.
+#
+# The widened block runs past 0x402cdf94 into what 0006 holds, so a diagnostic build
+# of 0003 and 0006 in one image is a real collision and layout.py reports it. That is
+# correct: the diagnostic builds are standalone by nature, and 0005 and 0007 already
+# exclude 0006 for the same reason.
+[[cave]]
+owner = "0003-velocity-humanise"
+addr  = 0x402cdddc
+size  = 0x200
+gate  = "diag_canary"
+note  = "The same block, widened for any diagnostic build. Mode 1 fills the tail with a canary, mode 2 counts 0005's fill of cave3, mode 3 reads 0007's entry counter."
+
+# trig_fire where the velocity is finalised. Six bytes are `movel %sp@(60),%d0` and
+# `addal %a2,%a3`; the stub re-emits both, offsets d0 by a random amount, rewrites
+# the step velocity at %sp@(72) when there is one, and rejoins at 0x4009afa6.
+[[detour]]
+owner  = "0003-velocity-humanise"
+addr   = 0x4009afa0
+size   = 6
+expect = "202f003cd7ca"
+entry  = "vel_humanise"
+
+# param_apply_delta after its prologue - the instruction 0002's param_delta_gate
+# resumes at, so the two chain without either naming the other. Six bytes of jmp
+# land across `moveal %sp@(16),%a2` and the first half of `movel %sp@(28),%d3`, so
+# both are re-emitted.
+[[detour]]
+owner  = "0003-velocity-humanise"
+addr   = 0x400378ae
+size   = 6
+expect = "246f0010262f001c"
+entry  = "vel_amount_gate"
+
+# param_value_text after its prologue - where 0002's boolop_text_gate resumes, so the
+# two chain the same way the delta gates do. Six bytes of jmp land across `movel
+# %sp@(28),%d4` and the first half of `moveal %sp@(24),%a3`, so both are re-emitted.
+# For VEL at 0 - an amount of 0, shown through vel_get_ui - it writes "0" instead of
+# stock's ERR.
+[[detour]]
+owner  = "0003-velocity-humanise"
+addr   = 0x400a85e8
+size   = 6
+expect = "282f001c266f0018"
+entry  = "vel_text_gate"
+
+# The get-by-id switch arm for VEL. Only the 4-byte jsr target is replaced, at +2 of
+# the instruction; the getter's other callers keep the stock target.
+[[patch]]
+owner       = "0003-velocity-humanise"
+addr        = 0x400a87b8
+size        = 4
+expect      = "400bfd20"
+from_symbol = "vel_get_ui"
+
+# Stock's short-name accessor, where every knob label is fetched from. Six bytes of
+# jmp land on the id-range compare, which the stub re-emits when it is not answering
+# itself, so the flags the following scs reads are the ones stock would have left.
+[[detour]]
+owner  = "0003-velocity-humanise"
+addr   = 0x400a8f98
+size   = 6
+expect = "0c81000001d5"
+entry  = "vel_label_gate"
+
+# ------------------------------------------------------ 0004-lfo-rnd (phase 1)
+
+[[cave]]
+owner = "0004-lfo-rnd"
+addr  = 0x402cd8a0
+size  = 0x53c
+note  = "LFO RND page descriptor and page vector, the page_info / title / get_value / delta / text / knob draw gates - the knob draw hands off to stock's own LFO DST callback - the destination name helper, the 16-entry destination and depth tables, the parameter name strings, and the change marker the delta gate calls (phase 1, 875 B); phase 2 adds the trig_fire and audio gates, the LCG state and 120 B of per-track state written at runtime (1307 B). First claim in cave2."
+
+[[cave]]
+owner   = "0004-lfo-rnd"
+addr    = 0x40029808
+size    = 0x30
+section = ".kgate"
+gate    = "dest_list"
+note    = "The last 48 B of cave4, taken from 0006's slack when cave2 had no room left: the knob-release gate that keeps the depth knobs from confirming the destination list, and the picker's list-creation gate that records the list's owner."
+
+# The voice LFO view's page vector: {3} becomes {3, 12}. Pressing LFO again then
+# cycles to page 12 through the base view's own multi-page handling.
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x400cb02a
+size    = 2
+expect  = "7201"           # moveq #1,%d1 - page count
+replace = "7202"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x400cb030
+size        = 4
+expect      = "401e1b14"   # one-entry source holding page 3
+from_symbol = "lfo_pages"
+
+# page_info answers page 12 from the cave; every other id goes to stock.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x400ff574
+size   = 6
+expect = "720b202f0004"
+entry  = "page_info_gate"
+
+# The dials: page_get_value's entry, for ids 1..4.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x40038462
+size   = 6
+expect = "4feffff448d7040c"
+entry  = "get_gate"
+
+# The knobs: param_apply_delta past its prologue, where 0003 rejoins.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x400378b6
+size   = 6
+expect = "77832f2a0074"
+entry  = "delta_gate"
+
+# The popup text: param_value_text past its argument loads, where 0003 rejoins.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x400a85f0
+size   = 6
+expect = "242f0020262f0024"
+entry  = "text_gate"
+
+# The knob draw, for the two destination knobs: the short name instead of a dial,
+# as LFO DST draws its own. Six bytes of jmp land across the prologue's lea and the
+# first half of the moveml, so both are re-emitted.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x400a857c
+size   = 6
+expect = "4feffff048d7003c"
+entry  = "knob_draw_gate"
+
+# Ids 1 and 3 get LFO DST's modflag, so the knob handler routes them to the
+# destination list exactly as it routes DST. No code: the test at 0x40039fbe reads
+# this word and nothing else in the image tests bit 0x10000 on any other record.
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf970
+size    = 4
+gate    = "dest_list"
+expect  = "00000000"       # id 1: modflags
+replace = "00010000"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf9d8
+size    = 4
+gate    = "dest_list"
+expect  = "00000000"       # id 3: modflags
+replace = "00010000"
+
+# The list's contents: the builder's call site inside the list view constructor.
+# Six bytes are the jsr alone, so the jsr is what the stub re-emits. The `addql
+# #8,%sp` that follows stays where it is and is where the stub rejoins - re-emitting
+# it as well popped the builder's arguments twice, which corrupted the stack of every
+# list the constructor built, stock's LFO DST included.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x4004aec6
+size   = 6
+gate   = "dest_list"
+expect = "4eb9400aa214"
+entry  = "list_filter_gate"
+
+# The knob-release list test: the container index the key handler keeps for the
+# knob, for ids 2 and 4. Six bytes are the jsr alone, so the jsr is what the stub
+# re-emits; it rejoins at the store to %fp@(-20).
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x4003a5f2
+size   = 6
+gate   = "dest_list"
+expect = "4eb940006ea8"
+entry  = "knob_cidx_gate"
+
+# The picker's is-this-the-knob's-list test, and its list creation: DS1 and DS2
+# share container index 0, so the owner is tracked by id. Six bytes are the jsr
+# alone at each; the stubs re-emit it and rejoin at the next instruction.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x40039d32
+size   = 6
+gate   = "dest_list"
+expect = "4eb940006ea8"
+entry  = "list_same_gate"
+
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x40039d9a
+size   = 6
+gate   = "dest_list"
+expect = "4eb940006ea8"
+entry  = "list_new_gate"
+
+# What the picker reads: param_set_read's entry, for ids 1..4. Six bytes of jmp land
+# across the prologue's lea and the first half of the moveml, so both are re-emitted.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x400a8dfa
+size   = 6
+gate   = "dest_list"
+expect = "4feffff048d74404"
+entry  = "read_gate"
+
+# The list's commit: param_set_value's entry, for ids 1..4. Six bytes of jmp land
+# across the prologue's lea and the first half of the moveml, so both are re-emitted.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x400a9000
+size   = 6
+gate   = "dest_list"
+expect = "4fefffd848d704fc"
+entry  = "setter_gate"
+
+# Parameter ids 1..4, dead Error records, become the four settings: container
+# index 0 (the sound's free word), range 0..0x7f00, and new names.
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf950
+size    = 4
+expect  = "ffffffff"       # id 1: container index
+replace = "00000000"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf958
+size    = 4
+expect  = "00000000"       # id 1: max
+replace = "00007f00"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf974
+size        = 4
+expect      = "402405ea"   # id 1: long name, was "Error"
+from_symbol = "str_r1dst_l"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf978
+size        = 4
+expect      = "4024084f"   # id 1: group name, was ""
+from_symbol = "str_group"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf97c
+size        = 4
+expect      = "40236f0d"   # id 1: short name, was "ERR"
+from_symbol = "str_r1dst"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf984
+size    = 4
+expect  = "ffffffff"       # id 2: container index
+replace = "00000000"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf98c
+size    = 4
+expect  = "00000000"       # id 2: max
+replace = "00007f00"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf9a8
+size        = 4
+expect      = "402405ea"   # id 2: long name, was "Error"
+from_symbol = "str_r1dep_l"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf9ac
+size        = 4
+expect      = "4024084f"   # id 2: group name, was ""
+from_symbol = "str_group"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf9b0
+size        = 4
+expect      = "40236f0d"   # id 2: short name, was "ERR"
+from_symbol = "str_r1dep"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf9b8
+size    = 4
+expect  = "ffffffff"       # id 3: container index
+replace = "00000000"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf9c0
+size    = 4
+expect  = "00000000"       # id 3: max
+replace = "00007f00"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf9dc
+size        = 4
+expect      = "402405ea"   # id 3: long name, was "Error"
+from_symbol = "str_r2dst_l"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf9e0
+size        = 4
+expect      = "4024084f"   # id 3: group name, was ""
+from_symbol = "str_group"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bf9e4
+size        = 4
+expect      = "40236f0d"   # id 3: short name, was "ERR"
+from_symbol = "str_r2dst"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf9ec
+size    = 4
+expect  = "ffffffff"       # id 4: container index
+replace = "00000000"
+
+[[patch]]
+owner   = "0004-lfo-rnd"
+addr    = 0x401bf9f4
+size    = 4
+expect  = "00000000"       # id 4: max
+replace = "00007f00"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bfa10
+size        = 4
+expect      = "402405ea"   # id 4: long name, was "Error"
+from_symbol = "str_r2dep_l"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bfa14
+size        = 4
+expect      = "4024084f"   # id 4: group name, was ""
+from_symbol = "str_group"
+
+[[patch]]
+owner       = "0004-lfo-rnd"
+addr        = 0x401bfa18
+size        = 4
+expect      = "40236f0d"   # id 4: short name, was "ERR"
+from_symbol = "str_r2dep"
+
+# The page key's cycle does not re-push the header title; push it after the cycle.
+# Six bytes of jmp land across `movel %a2,%sp@-` and the first four bytes of `jsr
+# 0x40078514`, so both are re-emitted.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x4003ab94
+size   = 6
+expect = "2f0a4eb940078514"
+entry  = "title_after_cycle"
+
+# ------------------------------------------------------ 0004-lfo-rnd (phase 2)
+
+# trig_fire, just after the event is marked valid: copy the track's settings word.
+# Six bytes of jmp land across `movel %d5,%a4@(12)` and the first half of `movel
+# %d0,%a4@(24)`, so both are re-emitted.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x4009b000
+size   = 6
+expect = "2945000c29400018"
+entry  = "trig_cfg_gate"
+gate   = "phase==2"
+
+# The audio interrupt's LFO call: redraw on note, add the held offsets, then call
+# the LFO as stock does. The stub re-emits the jsr.
+[[detour]]
+owner  = "0004-lfo-rnd"
+addr   = 0x40120fae
+size   = 6
+expect = "4eb94009e790"
+entry  = "audio_gate"
+gate   = "phase==2"
+
+# ------------------------------------------------- 0006-comp-preview
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x40029060
+size    = 0x7a8
+section = ".text"
+gate    = "!prof"
+note    = "All of cave4 but its last 48 B, which 0004 holds: the estimator, the static curve, the page vector, the renderer and the read-only tables the other claims do not hold. The shipping build is about 3.8 KB and no one pool has that free, so it is split across eight claims - the pools are separate regions of the image and can never merge. This one holds the estimator and the page code; cave5, cave6 and cave3 hold the rest of its code. Relocated from cave3 2026-09-21 with a byte-identical algorithm, so the address move can be proven by a hardware null before the pan, returns and distortion work rides on it."
+
+# The prof build's stage selector no longer fits beside 0004, so it takes all of
+# cave4, 0004's last 48 B included: build it without 0004 (0006 alone is best,
+# for timing a stage without the rest of the interrupt around it).
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x40029060
+size    = 0x7d8
+section = ".text"
+gate    = "prof"
+note    = "All of cave4 in the prof build, as the claim above plus room for the stage selector."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x402cdf94
+size    = 0x6c
+section = ".state"
+note    = "cave2's tail, after 0003 moved in below it. The column accumulator, the scroll phase, the trace index, DIST symmetry's per-block state, the detector, the GR pole, the BgWorker wait count, the trace scales and layout, and read-only tables cave4 had no room for: hrestab, the page vector source and rattab (88 B). The trace ring is in cave3."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x402ccfa8
+size    = 0x58
+section = ".aux"
+note    = "cave1's tail, runtime data only: the per-slot (cL, cR) side coefficients, rebuilt every block (64 B), the idle counter and the enumeration state."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x4002871c
+size    = 0xe0
+section = ".tab"
+note    = "The start of cave5: read-only tables that overflowed cave4 - the ATK x REL x RAT slow-attack scale (224 B). 0007-cave-probe's cave5 fill already excludes 0006."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x400287fc
+size    = 0x218
+section = ".ui"
+note    = "The rest of cave5: the page's text code - the encoder labels and the enumeration values - moved out of cave4, which the estimator fills."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x401ba290
+size    = 0x100
+section = ".sat"
+gate    = "!telem & !cal"
+note    = "The first 256 B of cave6: the analog saturation after the DIST gain - the per-sample routine the audio interrupt calls for each side, and its 33-point table (240 B). 0008-filter-hz holds the rest. 0007-cave-probe's cave6 fill excludes 0006."
+
+# The telem and cal builds put more in .sat - 592 B and 504 B - so they take all of
+# cave6 and cannot be built with 0008-filter-hz or 0010-kit-ab. The cal build is
+# best built alone anyway; a telem build leaves both out with --mods.
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x401ba290
+size    = 0x258
+section = ".sat"
+gate    = "telem"
+note    = "All of cave6 in the telem build: the saturation and the telemetry routines, which no longer fit cave3 once the level ring became a word a column. Code only; their counters stay in .sc."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x401ba290
+size    = 0x258
+section = ".sat"
+gate    = "cal & !telem"
+note    = "All of cave6 in the cal build, as for telem."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x40289ab8
+size    = 0x80
+section = ".ring"
+note    = "The start of cave3: the trace's 128 columns, a byte each - one column a screen pixel, where 64 columns at two pixels each fitted cave2's tail. cave3 has been free since 0005 was retired; RAM, and the only pool with room."
+
+[[cave]]
+owner   = "0006-comp-preview"
+addr    = 0x40289b38
+size    = 0x380
+section = ".sc"
+note    = "cave3, after the ring: the SEQ sidechain - the per-block row select, the two-section filter the audio interrupt calls once per side per sample, its per-SEQ coefficient table, and its runtime state (the sections' last input and output per side, and the block's level offset). Code and state together, cave3 being RAM. Then the level fill: its per-block and per-column hooks, the column mask for the draw slot, and its 128-column ring. And the per-SEQ slow-attack scale the estimator calls, with its 28-byte table (cave4 had no room). The telem builds add their USB telemetry writers here; telem = 3 takes it to the end of cave3."
+
+# The audio interrupt just after the effects call at 0x4012139a returns, which is
+# the window where the receive buffer holds this block's voices and 0x4009ef40 at
+# 0x4012143a has not yet been able to overwrite them. Six bytes of jmp land across
+# `addql #4,%sp`, `clrl %d1` and the first half of `lea 0x8000e508,%a1`, so all
+# three are re-emitted before rejoining at 0x401213aa.
+[[detour]]
+owner  = "0006-comp-preview"
+addr   = 0x401213a0
+size   = 6
+expect = "588f428143f9"
+entry  = "comp_probe"
+rejoin = 0x401213aa
+
+# The compressor page vector's element count, 1 -> 2. The constructor at 0x400c676e
+# copies this many entries from the source below and derives its own count as
+# (end - begin) / 4, so the count and the source have to move together.
+[[patch]]
+owner   = "0006-comp-preview"
+addr    = 0x400cb182
+size    = 2
+expect  = "7201"
+replace = "7202"
+
+# The page vector's source array. Stock points at 0x401e1b04, whose first entry is
+# page 11 and whose second is page 10 - a different view's vector - so a two-entry
+# array of our own is needed rather than simply widening the count.
+[[patch]]
+owner       = "0006-comp-preview"
+addr        = 0x400cb188
+size        = 4
+expect      = "401e1b04"
+from_symbol = "comp_pages"
+
+# CompressorPageView's vtable +0x10, the draw slot. The stub answers page index 0
+# by jumping to the stock renderer the thunk at 0x400c674c targets, so only index 1
+# draws the trace, in the layout grmode picks.
+[[patch]]
+owner       = "0006-comp-preview"
+addr        = 0x401e11b8
+size        = 4
+expect      = "400c674c"
+from_symbol = "comp_draw"
+
+# CompressorPageView's vtable +0x08, the key handler. The stub answers FUNC +
+# an arrow and FUNC + the page key on the preview page and jumps to the stock
+# handler for the rest.
+[[patch]]
+owner       = "0006-comp-preview"
+addr        = 0x401e11b0
+size        = 4
+expect      = "4003a544"
+from_symbol = "comp_keys"
+
+# CompressorPageView's vtable +0x60, the set-sub-page slot. The FX page code
+# resets the view to sub-page 0 when it is shown after a different page; the
+# hook keeps the current sub-page instead, so coming back shows the page left.
+[[patch]]
+owner       = "0006-comp-preview"
+addr        = 0x401e1208
+size        = 4
+expect      = "4003762e"
+from_symbol = "comp_setsel"
+
+# ------------------------------------------------------------ 0008-filter-hz
+
+[[cave]]
+owner = "0008-filter-hz"
+addr  = 0x401ba390
+size  = 0x100
+note  = "Above 0006's saturation in cave6, 256 B used: the FRQ text gate, its 12-entry semitone table and its range table. Held the rest of cave6 until 2026-09-27; its last 88 B went to 0010's data."
+
+# param_value_text's tail call into the record's text formatter, after stock's
+# validity check. Six bytes of jmp land across `lea %a2@(20),%a0` and the first half
+# of `movel %d3,%sp@(32)`, so both are re-emitted. The branch at 0x400a8640 targets
+# 0x400a8648 itself, the start of the jmp, and nothing targets 0x400a864c.
+[[detour]]
+owner  = "0008-filter-hz"
+addr   = 0x400a8648
+size   = 6
+expect = "41ea00142f430020"
+entry  = "filter_hz_gate"
+
+# ------------------------------------------------------------ 0009-main-rms
+
+[[cave]]
+owner = "0009-main-rms"
+addr  = 0x40137a48
+size  = 0x108
+note  = "The start of cave7, 262 B used: the per-block MAIN RMS scan, the two knob-draw wrappers, and four words written at runtime at the stub's end - the two sides' averages, the over flag and the wrappers' saved return address. Held all of cave7 until 2026-09-27; the rest went to 0010."
+
+# The audio interrupt straight after the receive buffer fill. Six bytes of jmp are
+# exactly `jsr %a2@` and `lea %sp@(24),%sp`; the stub re-emits both, then scans.
+[[detour]]
+owner  = "0009-main-rms"
+addr   = 0x4012135e
+size   = 6
+expect = "4e924fef0018"
+entry  = "rms_scan"
+
+# CompressorPageView's vtable +0x94 and +0x98, the knob draws. The compressor view's
+# own copies, so no other page is touched; 0006's preview page reaches them too.
+[[patch]]
+owner       = "0009-main-rms"
+addr        = 0x401e123c
+size        = 4
+expect      = "40037a56"
+from_symbol = "vol_knob_draw"
+
+[[patch]]
+owner       = "0009-main-rms"
+addr        = 0x401e1240
+size        = 4
+expect      = "40037c26"
+from_symbol = "vol_knob_draw_alt"
+
+# ------------------------------------------------------------ 0010-kit-ab
+
+[[cave]]
+owner = "0010-kit-ab"
+addr  = 0x40137b50
+size  = 0x124
+note  = "The rest of cave7: the toggle and the checksum. Its data is in cave6."
+
+# The telem and cal builds of 0006 take all of cave6, so they leave this out, as
+# they leave 0008 out.
+[[cave]]
+owner   = "0010-kit-ab"
+addr    = 0x401ba490
+size    = 0x58
+section = ".kab"
+note    = "The last 88 B of cave6: the three messages, and what is written at runtime - the stash pointer, the mode, the working kit's checksum and the popup's text buffer."
+
+# kit_reload_key's call of kit_reload, the single-kit branch NO + PLAY takes:
+# `jsr 0x400af0d2` there calls the toggle instead.
+[[patch]]
+owner       = "0010-kit-ab"
+addr        = 0x400dd5e0
+size        = 4
+expect      = "400af0d2"
+from_symbol = "kit_ab_toggle"
+
+# The popup's text, `pea 0x402578ae` ("KIT RELOADED!") at 0x400dd5e6: the toggle's
+# buffer instead. It holds no % so the formatter prints it as it stands.
+[[patch]]
+owner       = "0010-kit-ab"
+addr        = 0x400dd5e8
+size        = 4
+expect      = "402578ae"
+from_symbol = "kab_msg"
+
+# The key handler's NO + PLAY: its call of kit_reload at 0x400cd4ae, followed by
+# "KIT %d RELOADED!" with the kit's number. Found on hardware 2026-09-27, when the
+# first pair alone left NO + PLAY a plain reload showing "KIT 1 RELOADED!".
+[[patch]]
+owner       = "0010-kit-ab"
+addr        = 0x400cd4b0
+size        = 4
+expect      = "400af0d2"
+from_symbol = "kit_ab_toggle"
+
+# Its popup, `pea 0x40255ea6` at 0x400cd4d6. The kit number stock still passes
+# goes unused: the buffer holds no %.
+[[patch]]
+owner       = "0010-kit-ab"
+addr        = 0x400cd4d8
+size        = 4
+expect      = "40255ea6"
+from_symbol = "kab_msg"
+
+# ------------------------------------------------------------ candidate pools
+# cavescan's unreachable regions of 400 B or more outside every claim, 2026-09-27,
+# after it learnt to report whole routines. Probably-verified by 0011-batch-probe
+# the same day; each note has the result and what the session covered.
+
+[[pool]]
+name   = "cave8"
+start  = 0x40012a9e
+end    = 0x40012e10          # exclusive; 882 B
+stock  = "code"
+expect_sha256 = "9bfbf776aabd4732bc2e5998b4ae8249fba9356b006c63c0c06ddff829629408"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave9"
+start  = 0x4001976a
+end    = 0x4001a71a          # exclusive; 4016 B
+stock  = "code"
+expect_sha256 = "205ee967a6fd124349acf712186d238b256476fe319d2a8f5575ff1f17b1efbd"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave10"
+start  = 0x40025c00
+end    = 0x40025e28          # exclusive; 552 B
+stock  = "code"
+expect_sha256 = "2b00a761d78406ebdd5734af6c21446530977f468e177c51f0f18c923b21a95d"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave11"
+start  = 0x40026c8c
+end    = 0x4002738e          # exclusive; 1794 B
+stock  = "code"
+expect_sha256 = "c06f0cd3be46c126a206b0287a1a0752cb799c662fa85cd1188193344b78b044"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave12"
+start  = 0x400279c2
+end    = 0x4002870a          # exclusive; 3400 B
+stock  = "code"
+expect_sha256 = "c15e1d51e3396690e27a3c93edb02e2c4e27a68dc96f9bcf14dd6b4cb2d5aa9e"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave13"
+start  = 0x40029838
+end    = 0x40029a90          # exclusive; 600 B
+stock  = "code"
+expect_sha256 = "466e21886a954685632a510ac8b215b451db72bccf1ddd8caadec8550937cd78"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave14"
+start  = 0x400a757e
+end    = 0x400a773a          # exclusive; 444 B
+stock  = "code"
+expect_sha256 = "238c0d57d5791499c4f228b6d5533b92cd97d9394913e63c8b243102737289ca"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave15"
+start  = 0x400a7e58
+end    = 0x400a8000          # exclusive; 424 B
+stock  = "code"
+expect_sha256 = "dce53fd255c44ae47127778d8960c41a78adf52bae18128c21f940305e4bd252"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave16"
+start  = 0x400b1ab4
+end    = 0x400b222a          # exclusive; 1910 B
+stock  = "code"
+expect_sha256 = "b85e3957d2b76025f608bc157a13a5dc94ceac4a08fa057d42221c6015c91600"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave17"
+start  = 0x400bb15c
+end    = 0x400bb452          # exclusive; 758 B
+stock  = "code"
+expect_sha256 = "67b8a2278a6db223f084e65c57887c18eaff8fe712040b103f86d27e9849d906"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave18"
+start  = 0x400d3b0c
+end    = 0x400d3cfc          # exclusive; 496 B
+stock  = "code"
+expect_sha256 = "b77c291a24424b9106566e6f99a38115e9267e7c39a6e153f3141e16cdb00347"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave19"
+start  = 0x40135f46
+end    = 0x401362b6          # exclusive; 880 B
+stock  = "code"
+expect_sha256 = "99ffcebc098aa417aed3d2d8becc55eea36920a372e9a9df2a466a5a62998520"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave20"
+start  = 0x40136520
+end    = 0x401366d6          # exclusive; 438 B
+stock  = "code"
+expect_sha256 = "97d71b8e76078855417bf908f49dddfc50b13d8b33a834e86d4be1e71768bbaa"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave21"
+start  = 0x4013788e
+end    = 0x40137a48          # exclusive; 442 B
+stock  = "code"
+expect_sha256 = "d2a98c517471bb77ef04f446238b679b8e0de9d166bf55f3c67a228ab8616b08"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave22"
+start  = 0x401b70d8
+end    = 0x401b7274          # exclusive; 412 B
+stock  = "code"
+expect_sha256 = "eb138065567548852d41270ba8858951f9c23391aeb9b0b94946d804a407fd0e"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave23"
+start  = 0x401b9a72
+end    = 0x401b9e6a          # exclusive; 1016 B
+stock  = "code"
+expect_sha256 = "74157f27a870381b7bbeda7a08e42bddeb279e838768c39396a7733997bdd94b"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+[[pool]]
+name   = "cave24"
+start  = 0x401ba97e
+end    = 0x401bac70          # exclusive; 754 B
+stock  = "code"
+expect_sha256 = "92bd187c2776e37ba8bbf46e81859df27b8351f646b1fcf4dee2e031783c4a3e"
+status = "probably-verified"
+note   = """
+Unreachable code by cavescan, 2026-09-27: nothing outside dead code refers into it.
+Hardware, 2026-09-27: 0011-batch-probe's fill over this and the other sixteen
+candidates read 0 after playback, pattern switching, opening menus, the sampling
+view and copying; the control, ctrl11, read 3. "Probably" as for cave2..cave7: not
+covered were sampling itself, the sound pool, save and reload, song mode, +Drive
+access, USB and Overbridge connections, SysEx transfers, error paths, factory and
+test modes, and the OS upgrade.
+"""
+
+# ------------------------------------------------------------ 0012-slice-loop
+
+[[cave]]
+owner = "0012-slice-loop"
+addr  = 0x40012a9e
+size  = 0x2f0
+note  = "cave8: the menu item's construction, its label, icon and action, and the popup texts. The first claim in the pools 0011 promoted: watch it on the paths that session did not cover."
+
+# TrackMenuView's constructor epilogue, `moveml %sp@(24),%d2-%d6/%a2-%fp`, after
+# SAVE TRACK is appended. The stub builds one more item, re-emits the moveml and
+# rejoins at the constructor's `lea %sp@(128),%sp; rts`.
+[[detour]]
+owner  = "0012-slice-loop"
+addr   = 0x400f9e96
+size   = 6
+expect = "4cef7c7c0018"
+entry  = "slice_menu_add"
+
+# ------------------------------------------------------------ 0013-voice-dac
+
+[[cave]]
+owner = "0013-voice-dac"
+addr  = 0x4001976a
+size  = 0xe40
+gate  = "!timing & !dbg"
+note  = "The start of cave9: the three detour stubs, the per-slot gain table, the DAC SUM item's invokers, the changer's manager and texts, the DAC FILTER page and its knob gates, save, load, init and refresh stubs, DAC SUM's project load and save stubs, and the switch word, the per-track filter entries, the per-slot coefficients and filter state, written at run time as 0010's data in cave6 is. The pan coefficient table lives on the interrupt's stack."
+
+[[cave]]
+owner = "0013-voice-dac"
+addr  = 0x4001976a
+size  = 0xfa0
+gate  = "timing"
+note  = "The timing build: as the claim above, and the prof build's stage switches and its pair-at-a-time filter; the timing routines are in cave11. Sized for the prof build, the largest."
+
+[[cave]]
+owner = "0013-voice-dac"
+addr  = 0x4001976a
+size  = 0xf40
+gate  = "dbg & !timing"
+note  = "The debug build: as the first claim, and the readout on DAC SUM: the routes' spare-byte probe, its marker count and the spare-bit detector."
+
+[[cave]]
+owner   = "0013-voice-dac"
+addr    = 0x40026c8c
+size    = 0x170
+section = ".tim"
+gate    = "timing"
+note    = "cave11: the timing build's routines (t_start, t_end, t_emit, and t_burn with burn) and their words, out of cave9."
+
+[[cave]]
+owner   = "0013-voice-dac"
+addr    = 0x40026dfc
+size    = 0x4c0
+section = ".bq"
+note    = "cave11, after the timing build's .tim: the 2-pole types' coefficient routine (bq_coef) and biquad pass (bq_run), and their per-slot coefficients, state and flags."
+
+[[cave]]
+owner   = "0013-voice-dac"
+addr    = 0x400b1ab4
+size    = 0x700
+section = ".bqt"
+note    = "cave16: the 2-pole types' tables - cos and sin of w0 per FRQ step (Q31), 1 / 2Q per RES step for each Q range, and PK's boost factors per DEP (Q15)."
+
+[[cave]]
+owner   = "0013-voice-dac"
+addr    = 0x401b9a72
+size    = 0x3f8
+section = ".shp"
+note    = "cave23: the transient shaper (shp_run, shp_log) and its per-slot state."
+
+[[cave]]
+owner   = "0013-voice-dac"
+addr    = 0x400bb15c
+size    = 0x2f6
+section = ".shpt"
+note    = "cave17: the transient shaper's tables, dB per mantissa and gain per 0.25 dB."
+
+[[cave]]
+owner   = "0013-voice-dac"
+addr    = 0x400279c4
+size    = 0xd40
+section = ".flt"
+note    = "cave12, from its first long boundary: the DAC FILTER page's knob, glyph and graph gates, the routes' spare-byte stubs (and the debug build's probe), and the filter's read-only tables, FRQ's 128 poles and DEP's 128 gains."
+
+# The audio interrupt's store of the main-disable mask, `moveb %d1,0x80006466`,
+# exactly six bytes. The stub stores all bits set; d1 is reloaded at 0x401212bc.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x401212b6
+size   = 6
+expect = "13c180006466"
+entry  = "route_all"
+
+# The audio interrupt just after the receive buffer fill and 0009's hook, which
+# rejoins here, before the sampler's meter, the FX sends, 0006 and USB read the
+# voices: `moveq #5,%d1` and the first four bytes of `lea 0x4013f56c,%a0`, both
+# re-emitted after the stub's work, rejoining at 0x4012136c. d0, which the
+# compare there reads, is kept. Nothing branches into 0x40121366..0x4012136b.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40121364
+size   = 6
+expect = "720541f94013f56c"
+entry  = "vs_main"
+rejoin = 0x4012136c
+
+# The interrupt's other path (0x4011fd96, taken when 0x8000e578 is set): its
+# fill, `jsr 0x4010e944`, exactly six bytes, re-emitted first; the stub then
+# does the same work before that path's FX sends. Nothing branches into
+# 0x4011fde4..0x4011fde7.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x4011fde2
+size   = 6
+expect = "4eb94010e944"
+entry  = "vs_alt"
+
+# The timing build only: the audio interrupt after the FX sends and before USB,
+# where the timing words go over voice slot 7. Six bytes of jmp land across
+# `addql #4,%sp`, `movel %d2,%sp@` and the first half of `jsr 0x4010e650`; all
+# three are re-emitted and the stub rejoins at 0x401213a0, 0006's detour site
+# when 0006 is built. Nothing branches into 0x40121398 or 0x4012139a.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40121396
+size   = 6
+expect = "588f2e824eb9"
+entry  = "t_emit"
+rejoin = 0x401213a0
+gate   = "timing"
+
+# The voice FILTER view's page vector (constructor at 0x400caf82, key 0x33): {6}
+# becomes {6, 13}, as 0004 grows the LFO view's. Pressing FILTER again cycles to
+# page 13 through the base view's own multi-page handling; hpf_cycle keeps it on
+# page 6 while DAC SUM is off.
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x400caf82
+size    = 2
+expect  = "7201"           # moveq #1,%d1 - page count
+replace = "7202"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x400caf88
+size        = 4
+expect      = "401e1b1c"   # one-entry source holding page 6
+from_symbol = "filter_pages"
+
+# page_info's answer for ids above 11, `movel #0x401ec570,%d0` - exactly six
+# bytes, reached only by the range compare's bcss at 0x400ff57c, which 0004's
+# gate rejoins in front of. The stub answers page 13 and returns itself.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400ff592
+size   = 6
+expect = "203c401ec570"
+entry  = "hpf_page_info"
+rejoin = "none"
+
+# The page key's cycle: `movel %a2@(140),%d1; addql #1,%d1`, six bytes before
+# the remsl; 0004's title gate is after it at 0x4003ab94. Nothing branches into
+# 0x4003ab88..0x4003ab8b.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x4003ab86
+size   = 6
+expect = "222a008c5281"
+entry  = "hpf_cycle"
+rejoin = 0x4003ab8c
+
+# page_get_value past its prologue, where 0004's get_gate rejoins
+# (page_get_value_body): `moveal %sp@(16),%a2; movel %sp@(20),%d2`, both
+# re-emitted, rejoining at 0x40038472, whose move sets the flags the blts reads.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x4003846a
+size   = 6
+expect = "246f0010242f0014"
+entry  = "hpf_get"
+rejoin = 0x40038472
+
+# param_apply_delta's `jsr 0x400b68d2`, exactly six bytes, where 0004's
+# delta_gate rejoins (param_apply_delta_track), its argument already pushed.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400378bc
+size   = 6
+expect = "4eb9400b68d2"
+entry  = "hpf_delta"
+
+# param_value_text where 0004's text_gate rejoins (param_value_text_args):
+# `movel %d4,%sp@-` and the first half of `jsr 0x400ff556`, both re-emitted.
+# 0008's gate at 0x400a8648 comes after.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400a85f8
+size   = 6
+expect = "2f044eb9400ff556"
+entry  = "hpf_text"
+rejoin = 0x400a8600
+
+# Parameter ids 5, 11 and 12, dead Error records, become DAC FILTER's FRQ, TYP and
+# DEP: a range for the dial (0..0x7f00, TYP 0..0x200) and new names. Their
+# container index stays -1: the values are not in the sound's 42-word array, so
+# stock must never read or write them as one.
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfa28
+size    = 4
+expect  = "00000000"       # id 5: max
+replace = "00007f00"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfa44
+size        = 4
+expect      = "402405ea"   # id 5: long name, was "Error"
+from_symbol = "txt_frq_long"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfa4c
+size        = 4
+expect      = "40236f0d"   # id 5: short name, was "ERR"
+from_symbol = "txt_frq_short"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfb60
+size    = 4
+expect  = "00000000"       # id 11: max, TYP 0..7
+replace = "00000700"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfb7c
+size        = 4
+expect      = "402405ea"   # id 11: long name, was "Error"
+from_symbol = "txt_typ_long"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfb84
+size        = 4
+expect      = "40236f0d"   # id 11: short name, was "ERR"
+from_symbol = "txt_typ_short"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfb94
+size    = 4
+expect  = "00000000"       # id 12: max
+replace = "00007f00"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfbb0
+size        = 4
+expect      = "402405ea"   # id 12: long name, was "Error"
+from_symbol = "txt_dep_long"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfbb8
+size        = 4
+expect      = "40236f0d"   # id 12: short name, was "ERR"
+from_symbol = "txt_dep_short"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfbc8
+size    = 4
+expect  = "00000000"       # id 13: max, RES 0..127
+replace = "00007f00"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfbe4
+size        = 4
+expect      = "402405ea"   # id 13: long name, was "Error"
+from_symbol = "txt_res_long"
+
+[[patch]]
+owner       = "0013-voice-dac"
+addr        = 0x401bfbec
+size        = 4
+expect      = "40236f0d"   # id 13: short name, was "ERR"
+from_symbol = "txt_res_short"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfa90
+size    = 4
+expect  = "00000000"       # id 7: max, ATK dial 0..127
+replace = "00007f00"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfaac
+size    = 4
+expect  = "402405ea"       # id 7: long name, was "Error"
+from_symbol = "txt_atk_long"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfab4
+size    = 4
+expect  = "40236f0d"       # id 7: short name, was "ERR"
+from_symbol = "txt_atk_short"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfbfc
+size    = 4
+expect  = "00000000"       # id 14: max, SUS dial 0..127
+replace = "00007f00"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfc18
+size    = 4
+expect  = "402405ea"       # id 14: long name, was "Error"
+from_symbol = "txt_sus_long"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401bfc20
+size    = 4
+expect  = "40236f0d"       # id 14: short name, was "ERR"
+from_symbol = "txt_sus_short"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401c5614
+size    = 4
+expect  = "40237c39"       # id 457: long name, was CB TEST's "CB_OSC_SELECT"; the TEST machines are hidden, so stock never shows it
+from_symbol = "txt_pol_long"
+
+[[patch]]
+owner   = "0013-voice-dac"
+addr    = 0x401c561c
+size    = 4
+expect  = "4025a3fc"       # id 457: short name, was "SEL"
+from_symbol = "txt_pol_short"
+
+# param_knob_draw past its prologue, where 0004's knob_draw_gate rejoins
+# (param_knob_draw_body): `movel %sp@(28),%d2; movel %sp@(40),%d3`, both
+# re-emitted, rejoining at 0x400a858c. TYP (id 11) draws as stock's TYP. Nothing
+# branches into 0x400a8586..0x400a858b.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400a8584
+size   = 6
+expect = "242f001c262f0028"
+entry  = "flt_glyph"
+rejoin = 0x400a858c
+
+# sound_page_draw's page compare, after the knobs: `moveq #6,%d1; cmpl %d0,%d1`
+# and the first half of `bnew 0x400d3134`. The stub reimplements the compare and
+# branches to FILTER's code or the other pages' itself, and on page 13 draws
+# stock's filter graph and returns through the epilogue. Nothing branches into
+# 0x400d2e44..0x400d2e49.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400d2e42
+size   = 6
+expect = "7206b280660002ec"
+entry  = "flt_graph"
+rejoin = "none"
+reemit = false
+
+# Keeping the filter with the sound (sound-storage.md). sound_save after its
+# memset of the stored parameter block: `lea 0x401c59cc,%a0`, exactly six bytes,
+# a2 the stored record and a3 the live sound; the stub writes spare slots 42
+# (+0x70) and 43 (+0x72).
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40008492
+size   = 6
+expect = "41f9401c59cc"
+entry  = "hpf_save"
+
+# sound_load after it clears the live parameter array: `lea 0x401c5a74,%a0`,
+# exactly six bytes, a2 the live sound and a3 the stored record; the stub sets
+# or clears the live TYP, FRQ and DEP at +0x6d..+0x6f from slots 42 and 43.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x4000826a
+size   = 6
+expect = "41f9401c5a74"
+entry  = "hpf_load"
+
+# sound_load's entry: `lea %sp@(-24),%sp; moveml %d2-%d3/%a2-%a5,%sp@`, eight
+# bytes, re-emitted. The stub clears the live +0x6d..+0x6f when stock is about to
+# fail the load (record null or not version 4), as 0x4018cb98 uses the object
+# regardless. Callers reach it by jsr, `lea %pc@` and the bra at 0x4000ddd6; nothing
+# branches into 0x400081fa..0x400081fd.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400081f6
+size   = 6
+expect = "4fefffe848d73c0c"
+entry  = "snd_load"
+
+# sound_init_defaults past its null test: `moveal %a2,%a0; moveal %a2,%a3; clrl
+# %a0@+`, six bytes, re-emitted; a2 the sound. The stub clears +0x6d..+0x6f,
+# which stock's defaults never reach. Nothing branches into 0x400122d0..0x400122d5.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400122d0
+size   = 6
+expect = "204a264a4298"
+entry  = "snd_init"
+
+# The routes' spare bytes (re/subsystems/sound-storage.md): each velocity and
+# aftertouch route amount's low byte, which stock only ever writes as 0.
+# sound_load once both route sets are in: `tstb %d2; bnes 0x40008378; movel
+# %d3,%sp@-`, reimplemented, as the bnes cannot move; the stub copies slots 44..47
+# into the eight low bytes, then takes the bnes's two exits itself. Nothing
+# branches into 0x40008366..0x40008369.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40008364
+size   = 6
+expect = "4a0266102f03"
+entry  = "rte_rload"
+reemit = false
+
+# The sound push's velocity route loop: `movew %a1@(112),%a0@(1216)`,
+# reimplemented with the amount's low byte cleared, so the engine's route
+# words are stock's. d3 is set again two instructions on.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x4011f63c
+size   = 6
+expect = "3169007004c0"
+entry  = "rte_pushv"
+reemit = false
+
+# Its aftertouch loop: `movew %a2@(140),%a0@`, reimplemented likewise with d2,
+# which the loop sets again, and `moveal %d0,%a1`, re-emitted. 0x4011f660 is the
+# loop's head; nothing branches into 0x4011f662..0x4011f665.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x4011f660
+size   = 6
+expect = "30aa008c2240"
+entry  = "rte_pusha"
+reemit = false
+
+# The aftertouch menu's model, SoundModConf: getAmount (0x40033a56), `lea
+# %a3@(0,%a3:l:2),%a0; addql #4,%sp`, re-emitted; the stub reads the amount with
+# its low byte cleared
+# and rejoins past `mvsw ...; bras`, at that bras's target. The menu's display
+# rounds the whole word toward zero, so a low byte would show negative amounts a
+# step nearer 0. Nothing branches into 0x40033a92..0x40033a9b.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40033a90
+size   = 6
+expect = "41f3ba00588f"
+entry  = "rte_get_at"
+rejoin = 0x40033a9e
+
+# Its setAmount (0x400339b6), the clamped value's store and the load after:
+# `movew %d1,%a0@(0,%d0:l); movel #0x401cb5dc,%d0`, both re-emitted; the stub
+# puts the route's low byte back into the value first. The clamp's bles and bras
+# land on 0x40033a1c itself, the jmp; nothing branches into 0x40033a1e..0x40033a25.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40033a1c
+size   = 6
+expect = "31810800203c401cb5dc"
+entry  = "rte_set_at"
+
+# Its setRoute (0x400338ec), which writes a whole route from a copy: the amount's
+# store `movew %a1@,%a0@(0,%d0:l)`, reimplemented to store the high byte only so
+# the route keeps its low byte, and `lea %fp@(19),%a1`, re-emitted. Nothing
+# branches into 0x40033920..0x40033925.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x4003391e
+size   = 6
+expect = "3191080043ee0013"
+entry  = "rte_setrte_at"
+reemit = false
+
+# The velocity menu's model, Velocity, is the same template's code at other
+# addresses (ModSetupView's model is its +36 interface): getAmount over `lea
+# %a3@(0,%a3:l:2),%a0; addql #4,%sp`, rejoining at its bras's target;
+# setAmount over the store and the load after, re-emitted; setRoute over the
+# amount's store, reimplemented, and the lea after. Nothing branches into any
+# of the three past its first byte; 0x400c52c6, the getter's 0 return, is past
+# its detour.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400c52ba
+size   = 6
+expect = "41f3ba00588f"
+entry  = "rte_get_vel"
+rejoin = 0x400c52c8
+
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400c5246
+size   = 6
+expect = "31810800203c401cb5dc"
+entry  = "rte_set_vel"
+
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400c5148
+size   = 6
+expect = "3191080043ee0013"
+entry  = "rte_setrte_vel"
+reemit = false
+
+# The screen's idle tick, 0x400a2aaa (UI context; callers 0x400793dc,
+# 0x40089302, 0x400a2d4e, 0x400a3e42), past its link: `moveml %d2/%a2-%a4,%sp@`
+# and the first half of `moveal %fp@(8),%a2`, both re-emitted. The stub copies
+# every track's filter entry into hpf_track. Nothing branches into 0x400a2ab0..0x400a2ab5.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400a2aae
+size   = 6
+expect = "48d71c04246e0008"
+entry  = "hpf_refresh"
+rejoin = 0x400a2ab6
+
+# Keeping DAC SUM with the project's globals, beside the routing it overrides.
+# projectGlobals_t's load (0x4000763c; storage version 2): after its version
+# check, `mvsb %a2@(4),%d1; moveq #1,%d2`, exactly six bytes, both re-emitted;
+# a2 the stored record. Stored bytes 12..24 are read and written by neither the
+# load nor the save (0x40007a5c), and the save does not clear the record.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40007660
+size   = 6
+expect = "732a00047401"
+entry  = "dac_load"
+
+# projectGlobals_t's save: `moveq #2,%d0` and the first four bytes of
+# `moveb %a3@(211),%a2@(70)`, both re-emitted, rejoining at 0x40007bb8. The
+# bnes at 0x40007b9e targets the detour's start; nothing branches into
+# 0x40007bb2..0x40007bb7.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x40007bb0
+size   = 6
+expect = "7002156b00d30046"
+entry  = "dac_save"
+rejoin = 0x40007bb8
+
+# AudioRoutingMenuView's item list (0x400d8cb6) after its last item, USB TO MAIN:
+# `moveal %a4@,%a0; pea 0x2`, exactly six bytes, begin the call of the view's
+# vtable +28. The stub builds DAC SUM with USB OUT's sequence, re-emits both and
+# rejoins at 0x400d9022. Nothing branches into 0x400d901e or 0x400d9020.
+[[detour]]
+owner  = "0013-voice-dac"
+addr   = 0x400d901c
+size   = 6
+expect = "205448780002"
+entry  = "dac_menu_add"
+
+# ------------------------------------------------------------ 0014-ctrl-all
+
+[[cave]]
+owner = "0014-ctrl-all"
+addr  = 0x40029838
+size  = 0xac
+note  = "cave13: the gate that runs a knob turn over every sound track while TRK is held."
+
+# param_apply_delta after the track lookup, where 0013's hpf_delta rejoins: `moveal
+# %a2@,%a0; pea -1`, exactly six bytes, both re-emitted, rejoining at 0x400378c8.
+# The last gate in the chain 0002, 0003, 0004, 0013, so the ids those take stay
+# single-track.
+[[detour]]
+owner  = "0014-ctrl-all"
+addr   = 0x400378c2
+size   = 6
+expect = "20524878ffff"
+entry  = "ctrl_all_gate"
+
+# ------------------------------------------------------------ 0015-env-reset-amp
+
+# ENV RESET's change handler (0x400ef83a) computes set(get() + 2 * delta); the
+# doubling is this instruction. A nop steps it by one, through OFF, AMP, FILTER
+# and AMP+FILT.
+[[patch]]
+owner   = "0015-env-reset-amp"
+addr    = 0x400ef86a
+size    = 2
+expect  = "d683"           # addl %d3,%d3
+replace = "4e71"           # nop
+
+# ENV RESET's setter (0x400bcee4) clamps to 0..3, then masks with 2 before
+# storing to the live sound's +0x6c, clearing the amp bit. A mask of 3 keeps it.
+# The setter's other caller is the parameter-message dispatcher (0x4010339c).
+[[patch]]
+owner   = "0015-env-reset-amp"
+addr    = 0x400bcf1e
+size    = 2
+expect  = "7402"           # moveq #2,%d2
+replace = "7403"           # moveq #3,%d2
+
+# The amp envelope's attack command on a trig (0x401098d4, state 0): `oril
+# #0xb0000000,%d0`, re-emitted, rejoining at 0x40109b0a. With ENV RESET's amp bit
+# set the stub sends the instant drop to -128 instead; with bit_probe it is the
+# bit probe that found it.
+[[cave]]
+owner = "0015-env-reset-amp"
+addr  = 0x400298e4
+size  = 0x6c
+note  = "cave13, after 0014: the amp attack gate, or with bit_probe the bit probe."
+
+[[detour]]
+owner  = "0015-env-reset-amp"
+addr   = 0x40109b04
+size   = 6
+expect = "0080b0000000"
+entry  = "amp_attack"
+
+# Bit probe: the VCA overdrive word's store, `movew %d0,%a5@(42)`, becomes
+# `clrw %a5@(42)`, so OVR only selects the bit.
+[[patch]]
+owner   = "0015-env-reset-amp"
+addr    = 0x40109aae
+size    = 4
+expect  = "3b40002a"       # movew %d0,%a5@(42)
+replace = "426d002a"       # clrw %a5@(42)
+gate    = "bit_probe"
+

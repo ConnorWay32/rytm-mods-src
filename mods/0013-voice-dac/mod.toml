@@ -1,0 +1,281 @@
+[mod]
+id      = "0013-voice-dac"
+title   = "Voices to MAIN through the DAC, with a per-sound filter, transient shaper and polarity"
+
+enabled = true
+
+# cave9 is one of the pools 0011's fill covers; the two never share an image.
+excludes = ["0011-batch-probe"]
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+All eight voices leave the analog main bus and reach it again through the DAC,
+panned and summed on the ColdFire: the groundwork for processing a voice after
+its analog filter, such as a digital filter.
+
+The route mask store in the audio interrupt sets every voice's main-disable bit.
+After the receive buffer fills, each voice slot - the voice after its analog
+filter and amp, before pan - is split by the pan of its VCA words, as 0006 does,
+and the two sums are added to the PRE return pair of the output ring, which
+enters the analog mix ahead of the master distortion and compressor. A voice
+whose track stock has off the main bus stays out of the sum. The cost is fixed
+per block; nothing stands aside.
+
+Each voice is filtered first, set on a second FILTER page, DAC FILTER, reached
+by pressing FILTER again while DAC SUM is on. Its top row is FRQ, RES, TYP and
+DEP; stock's FILTER graph is drawn over FRQ and RES from FRQ, TYP and (for the
+2-pole types) RES, a flat line when TYP is OFF. TYP runs in stock's FILTER order
+- OFF, LP2, LP1, BP, HP1, HP2, BS, PK - and shows stock's TYP glyph and popup, or
+OFF. LP1 and HP1 are a bilinear first-order section (6 dB/oct, exactly -3 dB at
+the cutoff); the others a biquad each (the RBJ cookbook's sections, BP with
+0 dB at the centre, BS the notch). FRQ is stock's FRQ scale, a semitone a step
+with 440 Hz at 60, and its popup is stock's FRQ popup, so it reads in hertz
+where 0008 is built. RES sets the 2-pole types' Q, exponentially from RES 0:
+0.707 to 2.0 for LP2 and HP2 (a peak up to +6.3 dB), 0.5 to 8 for BP, BS and PK
+(width only); LP1 and HP1 have none. DEP mixes the filtered voice with the dry
+one: 0 dB, then 0.25 dB steps of cut to -31.5 dB, then FULL, the plain filter.
+Below FULL, HP1 and HP2 give low shelves, LP1 and LP2 high shelves, BP cuts all
+but the band and BS is a bell cut of DEP's depth, the poles staying at FRQ. For
+PK, DEP is a boost instead, +0.0 to +6.0 dB over its range, built on BP. A
+slot's coefficients are worked out again only when its values change; switching
+between LP1 and HP1 at one FRQ carries the filter's state over (LP1 = x - HP1),
+so it should not click, but other type switches can. The TYP and RES knobs take
+stock TYP's and RES's encoder range and acceleration, copied into their records
+each idle tick, and TYP keeps its fractional delta, so both step as stock's.
+
+The 2-pole types run after the 1-pole pass, each slot on one of them through its
+biquad in place (direct form I, five multiplies a frame); a slot on none costs a
+few instructions a block, so the cost follows the voices using them. The
+coefficients are Q30, worked out in the interrupt when the slot's entry changes,
+from cos and sin of w0 per FRQ step (cave16), 1/a0 by divu.l and one Newton
+step; modelled against floating point over every type and FRQ, none is unstable
+and each lies within 3e-5 of its float design. The EMAC's << scale factor is not
+used: the first 2-pole build relied on it and BP came out silent and the other
+types wrong, as a model with the scale ignored predicts; Q30 products are now
+doubled after movclr, and the filter sums its terms at half scale and doubles
+with saturation.
+
+The DAC FILTER page's bottom row holds a transient shaper's ATK and SUS and
+POL. ATK and SUS run -64..+63, 0 the centre, drawn as SAMPLE FINE's dial
+(dotted at 0) and stepped as stock's PAN; FUNC + turn snaps to the next of -64,
+0 and +63 once the turn adds up to `snap` steps one way. Full scale is 12 dB
+of attack or sustain change on a strong transient, the total boost capped at
++6 dB. POL (+ or -) inverts the voice's contribution to the sum, folded into
+its pan gains, so it costs nothing; the individual outputs are untouched.
+
+The shaper runs after the filters and before the sum, a slot at a time for
+each voice whose track has ATK or SUS set. Once a block it takes the slot's
+peak and moves three followers - instant attack with 40 ms release, 15 ms
+attack with 150 ms release, instant attack with 300 ms release - and from
+dB(fast / slow) (the attack) and dB(hold / fast) (the sustain), each clipped
+to 12 dB, works out a gain, 0 dB below -60 dBFS. A block's own peak sets its
+gain (two passes: the peak, then the scaling), ramped from the last block's
+across it, or stepping there when it moves more than 3 dB, as at an onset.
+Levels in dB come from a normalisation and a 128-entry table, the gain from a
+0.25 dB table, applied at half scale and doubled with saturation. A voice
+turned on starts its followers at its first block's peak. With ATK and SUS 0
+on every voice track the shaper is skipped outright, a test a block (a flag
+the idle tick sets, so turning one on takes up to a tick); a voice at 0 among
+others is skipped and untouched. It was modelled in tools/voice_dac_shaper.py
+on captured voices first, and the device's integer code emulated against that
+model within 0.1 dB. Its knobs reuse ids 7 and 14 (Error records) and 457 (CB
+TEST's CB_OSC_SELECT, a hidden machine's, which stock never shows), renamed.
+
+The values are kept in the live sound's spare bytes, untagged: TYP in +0x6d
+bits 0-2, FRQ and DEP xor 0x7f in +0x6e/+0x6f, RES in velocity route 0's spare
+byte (below), so all zero is TYP OFF, FRQ 127, DEP FULL, RES 0; POL in +0x6d
+bit 3; ATK and SUS signed in velocity routes 1's and 2's spare bytes, clamped to
+-64..63 where read; +0x6d bits 4-7 and bit 7 of +0x6e and +0x6f are spare. sound_init_defaults and a load stock is
+about to fail clear them, so no sound reaches a track with them undefined; a
+sound reset resets DAC FILTER with the rest. TYP, FRQ, DEP and POL are saved in
+the stored record's spare slots 42 and 43 ((0xb8 + TYP) << 8 | FRQ, and
+POL << 8 | DEP), only when not all zero (sound-storage.md); a tick in the UI's idle routine copies
+each track's into the table the audio interrupt reads. TYP was renumbered to
+stock's order with the 2-pole types, so sounds saved before that load another
+type (LP1 as LP2, HP1 as LP1). Each change ends with the notice stock's sound
+settings setters send, SoundConfigChangedInfo through the track's sound
+accessor; without it a change played and survived a kit save but was lost at a
+reboot without one.
+
+The routes' spare bytes: each velocity and aftertouch route's amount word holds
+the amount in its high byte and, in stock, always 0 in its low byte - 64 bits a
+sound, for 0013's per-sound settings; velocity routes 0..2's hold RES, ATK and
+SUS, the other five are free. They are
+saved in slots 44..47 and loaded once sound_load has loaded the routes. Stock
+reads the whole word in three places, each hooked: the sound push clears the low
+byte on its way to the engine, and the route menus' models - SoundModConf
+(aftertouch) and Velocity, one template's two copies - clear it in getAmount,
+whose result the display rounds toward zero, and keep it in setAmount and
+setRoute, which write whole words. ControlInputParam, the template's third copy,
+holds the project's control inputs and is left alone.
+
+Hardware, 2026-10-07, POL in slot 43: POL - survives a reboot without a kit
+save, a kit save and reboot, the sound pool onto another track and NO + PLAY;
+a sound saved by the build before loads POL +. Before this, the save kept only
+TYP's bits of +0x6d and POL was lost at a reload or a reboot.
+
+Hardware, 2026-10-06, the shaper build: ATK and SUS shape onsets and tails as
+in the prototype, POL inverts, nothing is heard with both 0, values survive a
+reboot with and without a kit save, FUNC snaps, and the dial draws dotted at 0.
+Kits saved while the route-byte probe ran read ATK and SUS +63 (their marker,
+90, clamped).
+
+Hardware, 2026-10-06, the 2-pole build: each type sounds as its glyph across
+FRQ; RES peaks LP2 and HP2 and narrows BP, BS and PK; DEP below FULL gives the
+shelves and BS's bell cut, PK's boost reading +0.0 to +6.0 dB; the bottom of
+the FRQ range is clean; TYP and RES survive a reboot with and without a kit
+save; TYP and RES step as stock's. Kits saved while the route-byte probe ran
+carry its marker, 0x5a, in every route byte: RES reads 90 on them.
+
+Hardware, 2026-10-06, dbg build: kits saved with the tagged bytes load the same
+values; untouched, stock-saved and reset sounds read the defaults; values survive
+a reboot with and without a kit save, the sound pool, copy/paste, NO + PLAY and
+a pattern change to another kit; the previous build reads kits this one saved.
+The route bytes' markers survive a kit save and reboot, amount edits, FUNC
+reset, destination changes and CLEAR/PASTE MODULATIONS and their UNDO in both
+menus, and no engine route word carried one.
+
+Hardware, 2026-09-29, DAC FILTER: TYP and DEP survive a reboot without a kit
+save (with the notice; not without it) and a kit save and reboot. An untouched
+sound reads DEP FULL (it read 0 dB while the default's DEP field was lost to a
+`|` the assembler takes as a comment). The screen is right: the popups (FRQ in
+hertz, DEP in dB and FULL, TYP), TYP's glyph and OFF, and the graph in the top
+row, flat in OFF. The rest of
+the HIGH-PASS list below: each mode sounds right across FRQ and DEP; the sound
+pool, copy/paste, NO + PLAY kit reload and a pattern change to another kit and
+back are not yet checked for this version.
+
+DAC SUM, the last item of AUDIO ROUTING, switches it at run time. OFF is
+stock's routing and no sum. It is kept with the project's globals, beside the
+routing it overrides: stored bytes +12 (tag) and +13 of each of the four
+projectGlobalsStorage_v2_t records, which stock's load and save never touch.
+Each record keeps its own value; the UI's idle tick follows the active one. A
+record saved without the tag loads as OFF. The item is built
+after USB TO MAIN with USB OUT's sequence and managers; its value draws as ON
+or OFF and changes with the value controls, up for ON. Switching clicks once:
+the analog bus changes at once, the DAC path 2.58 ms later.
+
+Hardware, 2026-09-28, the HIGH-PASS version this page replaced (one knob, HPF),
+with the shipping mods: the page shows only while DAC SUM is on, the knob and its popup work, each track
+keeps its own value, and 0004's LFO RND and 0008's FRQ popup are unaffected.
+The value survives kit save and reload, another kit loaded and back, a
+pattern change to another kit and back, NO + PLAY kit reload, the sound pool,
+sound copy/paste and a power cycle - with a kit save before it, as that version
+wrote the sound without the change notice; an untouched sound reads OFF. Muted tracks
+go silent with DAC SUM on as with it off. DAC SUM survives power cycles, on
+and off, without a project save.
+
+CPU, 2026-10-06, the burn build (tools/voice_dac_burn.py) with 0006's
+telemetry, in the worst case: A16 playing, DAC SUM on, every voice track LP1,
+the compressor preview page up. With nothing added 0013 took 4.24% of a block,
+the UI event queue held at about 2, BgWorker had jobs pending in every frame
+and 0006's estimator stood aside in every frame. Added interrupt time did not
+make the queue run away: each step raised it to a new level it then held for
+the minute - about 20 at +0.5%, 59 at +1%, 104 at +1.5%, 147 at +2% - so the
+UI kept up but further behind, and the preview page's scrolling visibly paused
+from +0.5%. An earlier 10 s sweep without a drain between steps read that
+climb as a runaway; at +8% the device's USB audio dropped and it needed a
+reboot. Where the UI stops answering lies above +2%, not measured. New per-voice
+stages cost in proportion to the voices using them, as each is skipped when
+off; this worst case is not the one to size them against.
+
+Headroom, 2026-09-28, the timing build's peak and clip counters over A01-A16
+and B01-B05 with DAC SUM on and every HPF off (build/mix/20260928_145359,
+tools/voice_dac_headroom.py): the DAC sum, PRE returns included, peaked at
+-12.3 dBFS at most (A16; -21.6 at least, A09), and no side-frame reached full
+scale on any pattern.
+
+The filter skips a pair of slots that are both off (TYP OFF or DEP 0 dB),
+keeping its state on the signal so turning a filter on does not click (by ear,
+2026-09-28, HIGH-PASS version). From the profile, that took the stub from about
+3.2% of a block to about 1.6% with no HPF engaged, about 0.4% a pair engaged.
+The DAC FILTER version, timing build, 2026-09-29, one session, all eight voices
+playing: 2.44% of a block (median; 2.87% p99) with every TYP OFF, 3.96% (4.26%
+p99, 4.48% max) with every voice track LP1 - 0.38% a pair, as the HIGH-PASS
+filter's. Coefficients are worked out only when a slot's values change, so the
+steady state adds a compare a slot. The route byte's only other writers
+are analog circuit calibration's, which only ever take voices off the bus
+(compressor-hardware.md), so nothing puts the analog path back under the DAC
+path.
+
+Hardware, 2026-09-28, before the switch: the voices sounded right, the pan split
+matched stock within 0.01 per slot over USB, the latency was 2.58 ms and the
+polarity was inverted, since fixed. K and the slot trims were then set from
+A/Bs on and off: slots 0-3 and 5 match the analog path within 0.1 dB; slot 6's
+trim was corrected from the same measurement and not measured again.
+
+Known limits: the voices reach MAIN 2.58 ms later than they would through the
+analog bus. They share the PRE pair with the delay and reverb returns and the
+PRE-FX audio input, and are clamped at its full scale (about 12 dB above the
+loudest pattern measured). Individual outputs are unaffected, and carry the
+voice before the filter. TYP, FRQ and DEP cannot be p-locked or reached over
+MIDI: they live outside the sound's 42 parameters. Switching TYP between LP1 and
+HP1 clicks on a sound with much energy at either end (hardware, 2026-09-29): the
+state carries over, but the output changes from one filter's to the other's at
+once; a crossfade would take it away. The graph draws LP1's slope right of the
+FRQ point and HP1's left of it, as stock's FILTER graph does. The slot 4 and 7 trims rest on one
+pattern each. With DAC SUM on the USB voice channels carry the filtered voices.
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# K, Q15: a voice slot's gain into the PRE pair at hard pan. 11190 is 0.341:
+# 10150 (0.310, inferred from 0006's calibration) read 0.85 dB low against the
+# analog path on slots 0-3 and 5, DAC SUM on against off in one session over
+# USB, A02 and A04 (build/mix/20260928_113815, _113939), 2026-09-28.
+k = 11190
+# FUNC + turn on ATK or SUS snaps to the next of -64, 0 and +63 once the turn
+# has added up to this many steps one way (8.8 deltas, as the knob reports
+# them); a snap on every event was far too sensitive (2026-10-06).
+snap = 4
+# 1 draws ATK's and SUS's knobs as SAMPLE FINE's - dotted at 0, solid
+# elsewhere - by copying FINE's draw callback (RAM record +0x24, the style-8
+# dial template 0x419a45f8) into theirs each idle tick. A kit saved while the
+# route-byte probe ran held ATK and SUS at its marker, 90, past the dial's
+# range, which this dial drew as a dotted centre until turned; they are now
+# clamped to -64..63 where read (hardware, 2026-10-06).
+dial = 1
+# 1 streams voice_sum's run and the interval between interrupts, DMA timer 0
+# ticks, on USB channel 10 in place of voice slot 7, for
+# tools/voice_dac_timing.py; the device's audio is untouched, slot 7 being
+# restored before the sum. The words do come back into MAIN if the Mac loops
+# the Rytm's USB audio back to it: MAIN reads hot and clicks at about 27 Hz, the
+# rate stock alternates its USB paths, until USB is unplugged (2026-09-28).
+# Measured
+# with it, DAC SUM on, hpf 150, all eight voices: 4.79% of a block (median),
+# 5.60% p99; 5.59% before the filter ran a slot at a time. Keep at 0 to ship.
+timing = 0
+# With timing: 1 makes the compressor's MUP integer part (CC 81) a stage
+# selector at run time, bit 0 skipping the filter pass, bit 1 the sum and
+# output pass, and bit 2 filtering a slot at a time instead of in pairs, for
+# tools/voice_dac_timing.py --prof. Keep at 0 to ship.
+prof = 0
+# With timing: 1 adds a spin to every audio interrupt, while the compressor's
+# MIX (CC 84) is 0, of MUP's integer part (CC 81) times 0.5% of a block, for
+# tools/voice_dac_burn.py: a dial of added interrupt load, to find how much the
+# UI and BgWorker tolerate. MIX 0 is the dry path, where MUP's makeup gain (up
+# to about +40 dB) has no effect, and arming on it keeps a kit's own MUP from
+# burning: the first version read MUP alone and hung the UI at boot. Not with
+# prof. Keep at 0 to ship.
+burn = 0
+# 1 shows, in place of DAC SUM's ON/OFF, "R<tracks>m<marks>": a probe of the
+# routes' spare bytes not yet in use - all but velocity routes 0..2's, RES, ATK
+# and SUS. Each idle tick writes the marker 0x5a into all five of any voice
+# track's sound
+# holding none (counted in <marks>, hex, F for 15 and more); a sound found with
+# some markers and some zeros, or another value, sets its track's bit in
+# <tracks> (hex, kept until reboot) and is marked again. E
+# follows when an engine route word has a low byte set, B when the filter
+# bytes' spare bits are set. The probe's writes send no change notice, so they
+# persist only once the sound is edited and saved. Keep at 0.
+dbg = 0
+
+[requires]
+shared = true
+symbols = ["mem_new", "std_string_from_cstr", "std_string_dtor", "text_draw",
+           "project_singleton", "track_index_of", "text_font", "text_ctx",
+           "str_fmt_s", "str_width_xxx", "kit_track_sound"]

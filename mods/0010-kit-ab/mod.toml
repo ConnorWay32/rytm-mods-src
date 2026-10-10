@@ -1,0 +1,41 @@
+[mod]
+id      = "0010-kit-ab"
+title   = "NO + PLAY toggles between the edited kit and the saved one"
+
+enabled = true
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+NO + PLAY becomes an A/B between the kit as edited and as saved. The first press
+keeps the edits in a stash and reloads the saved kit, under stock's popup ("KIT 1
+RELOADED!"); the next puts the edits back ("EDITS RESTORED!"). Editing while the
+original plays ends the A/B: the next press keeps those edits instead, dropping
+the stashed ones, and reloads as a first press does. The same happens after a
+change of kit or any other reload, found by a checksum of the working kit taken
+after each press. A press on a kit with no edits is a plain reload and arms
+nothing.
+
+Repoints both single-kit reload calls and their popups' text: the key handler's
+NO + PLAY (0x400cd4ae, "KIT %d RELOADED!") and kit_reload_key (0x400dd5de, "KIT
+RELOADED!"). The stash, one 0x9e3-byte kit, comes from the firmware's heap on
+the first press. The restore copies it back and applies it exactly as stock's
+reload applies the saved kit, including kit_mark(working, 0), whose meaning is
+not established. Reloading every kit stays stock.
+"""
+
+[sources]
+stub = "stub.s"
+
+[requires]
+shared = false
+symbols = [
+  "memcpy",
+  "mem_new",
+  "kit_reload",
+  "kit_working_data",
+  "kit_mark",
+  "kit_apply",
+  "kit_push",
+]

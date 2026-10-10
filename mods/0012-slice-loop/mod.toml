@@ -1,0 +1,47 @@
+[mod]
+id      = "0012-slice-loop"
+title   = "SLICE LOOP in the track menu: sixteen trigs slicing a one-bar loop"
+
+enabled = true
+
+# cave8 is one of the pools 0011's fill covers; the two never share an image.
+excludes = ["0011-batch-probe"]
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+A SLICE LOOP item after SAVE TRACK in the track menu (FUNC + CHRO). On an empty
+sound track of 16 steps or more it places trigs on steps 1..16, locks trig n's
+sample START to 6(n-1) and END to 6n, and sets the track's TRIG page defaults to
+SYN off, SMP on - for a one-bar loop padded so the bar is 96/120 of the sample.
+It refuses, changing nothing, on the FX track, on a shorter track and on a track
+with any trig. Every write goes through stock's setters.
+
+A detour over TrackMenuView's constructor epilogue appends the item, built as
+SAVE TRACK's is. See design.md.
+"""
+
+[sources]
+stub = "stub.s"
+
+[requires]
+shared = false
+symbols = [
+  "mem_new",
+  "std_string_from_cstr",
+  "std_string_dtor",
+  "project_singleton",
+  "track_selection",
+  "track_index_of",
+  "current_track_pattern",
+  "pattern_length",
+  "trig_flag_get",
+  "param_target_for_track",
+  "param_set_value",
+  "trig_place",
+  "track_lock_set",
+  "popup_ctor",
+  "view_show_popup",
+  "shared_ptr_release",
+]

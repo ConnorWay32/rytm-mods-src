@@ -1,0 +1,44 @@
+[mod]
+id      = "0000-shared"
+title   = "Shared runtime: tables and helpers the mods call into"
+
+enabled = true
+
+# re-only | built | hardware-verified | retracted
+status  = "built"
+
+# Not a feature. It holds one copy of what more than one mod needs, so the copies
+# cannot drift and the bytes are paid for once. Every exported label starts with
+# shared_; tools/build.py assembles this first and writes build/shared.inc from
+# those labels, which the calling stubs include.
+provides_shared = true
+
+summary = """
+The sixteen-step amount table and its dial stops, the two-digit decimal formatter
+the value popups use, and the 32-bit LCG draw behind every random offset. 0003 and
+0004 each had their own copy of all four.
+
+Also the sound plumbing every mod that edits a sound needs: the live sound for the
+selected track or for one track, and the change notification that makes an edit
+reach storage. 0004 had all three and walked the same accessor chain twice.
+
+It lives in cave1, in the 324 B left after 0002 - space no single mod could use,
+because a mod gets one contiguous claim and 0002 holds the rest. cave1 is also the
+only pool with status verified, which suits the one region every mod depends on.
+
+Disabling this while anything that calls it is enabled is a build error, not a
+silent break.
+"""
+
+[sources]
+stub = "stub.s"
+
+[requires]
+symbols = [
+  "project_singleton",
+  "track_index_of",
+  "kit_track_sound",
+  "kit_param_changed",
+  "is_key_held",
+  "KEY_FUNC",
+]

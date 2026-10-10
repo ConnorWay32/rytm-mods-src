@@ -1,0 +1,84 @@
+[mod]
+id      = "0006-comp-preview"
+title   = "Compressor gain-reduction preview pages"
+
+enabled = true
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+One more compressor page holding a scrolling trace of estimated gain reduction,
+reached by pressing the compressor page key again, which then returns to the
+stock page. FUNC + the page key switches its layout: the level, threshold and GR
+together, or GR alone with 0 dB at the top. It is stock page 11 listed twice in
+the view's page vector rather than a new page id, so stock's parameter lookup,
+title and encoder mapping are inherited unchanged and the entries are told apart
+by the view's selected index in the draw slot.
+
+The estimate builds each side of the compressor's input from the audio
+interrupt's receive buffer - the eight voice slots split by pan, dropped when
+off the main bus, slots 5 and 6 trimmed, plus the PRE delay and reverb returns -
+through the master distortion and its symmetry and each SEQ's sidechain, into a
+5 ms peak detector on the louder side. A static curve that THR slides along the
+level axis gives the demand, and one attack/release pole a block follows it. The
+model and every calibrated value: re/subsystems/compressor-model.md.
+
+Hardware-verified 2026-09-20: the page, hook, renderer, scroll and producer
+all run, and an on-device null of the input model against the MAIN pair reads
+near zero. Accuracy and known limits: re/subsystems/compressor-model.md. The
+main ones: on random settings over drum patterns it was not fitted on, the
+estimate reads 1.6 dB rms from the measured reduction with no bias (2026-09-26),
+a steady tone 0.56; DIST symmetry away from 64 is outside the model; the
+reduction past 36 dB is capped; POST returns are not modelled and PRE returns
+join the sum about 4 ms early; and material whose crest factor is far from the
+calibration tone's reads off.
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# 1 streams a telemetry frame on USB channel 11
+# in every audio interrupt, whether or not the page is on screen, for
+# tools/comp/telemetry/monitor.py. 32 words a block, one a frame, each an 8-bit tag
+# (0x5A ^ index) over 16 bits of data: the block count, stock's display idle
+# counter and stage, the interval between interrupts and this stub's own run
+# time (DMA timer 0 ticks), the compressor parameter block, DIST, the analog
+# control words 0x800063c2/c6/c8 that the interrupt builds from it, the
+# preview page's draw count and idle budget, the interrupt's stack pointer, and
+# the depth of the UI event queue at 0x41943f54, the background worker's
+# job queue (its deque's finish - start, cur and node), and the on-chip ADC's
+# result slots 0..3 (tools/comp/telemetry/adc_probe.py); 2 sends instead of
+# the ADC slots the first 8 characters of the name of the job BgWorker is
+# running (tools/comp/telemetry/bg_jobs.py); 3 the UI event queue's write
+# index and the types of its newest and head events
+# (tools/comp/telemetry/ui_events.py). It takes all of cave6,
+# so build it without 0008-filter-hz and 0010-kit-ab.
+# Keep at 0 to ship: it replaces channel 11's external input over USB.
+telem = 0
+# 1 skips the whole estimator - the producer and the trace stop -
+# while the page still draws and telem still streams. For timing kit loads with
+# the page up but without the estimator's interrupt time. Keep at 0 to ship.
+noest = 0
+# 1 makes MUP's integer part a stage selector, each set bit
+# skipping one stage of the estimator - 1 the voice sum, 2 the saturation, 4 the
+# SEQ sidechain, 8 the peak tracker, 16 everything after the sample loop - for
+# profiling with telem and tools/comp/telemetry/profile_stages.py. Keep at 0 to ship.
+prof = 0
+# The calibration build, for tools/comp/calibrate.py (re/subsystems/
+# compressor-calibration.md). Not with telem, prof or noest, and
+# best built alone: tools/build.py --mods 0006-comp-preview. It estimates on every
+# block whether or not the page is up, and USB channels 10 and 11 carry, on the
+# frames the sample path uses (0, 2 .. 30), the model's L and R sides, and on the
+# others a tagged record of the block: the parameter block and DIST read back, the
+# detector's peak, the level, the demand, the gain reduction, whether the
+# estimator stood aside, its run time and the interrupt interval, and the UI and
+# BgWorker queues (cal_out in stub.s has the layout). MUP's integer part picks
+# the sides at run time: 0 after the saturation, x64 (MAIN is 90.49 / 64 of a
+# side); anything else after the DIST gain and before the saturation, x8.
+# Keep at 0 to ship: it replaces the external inputs on USB channels 10 and 11.
+cal = 0
+
+[requires]
+shared = false

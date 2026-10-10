@@ -1,0 +1,8 @@
+# The calibration project's roles: which patterns and which track play
+# each part of mod 0006's calibration (re/subsystems/compressor-calibration.md).
+# Written by calibrate.py roles; the project itself is calibration_project.syx.
+[roles]
+fit = "A01-A08"
+verify = "A09,A10"
+scratch = "B16"
+tone_track = 8

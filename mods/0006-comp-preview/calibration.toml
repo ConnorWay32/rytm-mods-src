@@ -1,0 +1,120 @@
+# Mod 0006's calibration: every calibrated value the estimator uses, in physical
+# units, with where it came from. tools/comp/calib_tables.py generates calib.inc
+# from this file - the constants and one macro per table, which stub.s includes -
+# and checks that calib.inc is current. Nothing calibrated is written into stub.s
+# by hand. What each value means: re/subsystems/compressor-model.md. How to
+# remeasure it: re/subsystems/compressor-calibration.md.
+
+[input]
+# Per-slot trim on the side coefficients, dB: slots 5 and 6 read hot against MAIN
+# (compressor-hardware.md, per-voice S). Applied as 32767 * 10^(-dB/20).
+slot_trim_db = [0.0, 0.0027, 0.0, 0.0346, 0.0793, 0.9241, 1.1018, 0.1957]   # calibrate.py input calinput_20260925_142121, 2026-09-25
+# PRE return constants: at -1/8, an on-device null against MAIN read the delay's L side 9.4 dB low and
+# the reverb 15.5 dB low, each alone (hardware, 2026-09-21). The constant is
+# -1/8 * 10^(dB/20), Q31.
+delay_db = 10.18   # calibrate.py input calinput_20260925_142121, 2026-09-25
+reverb_db = 16.83   # calibrate.py input calinput_20260925_142121, 2026-09-25
+
+[distortion]
+# DIST's gain against DIST 0, from a voice-path probe, 2026-09-21
+# (calibrate.py dist fits it now). The table's last point is DIST 128, extending the 96..127 slope.
+gain_dist = [0, 32, 64, 96, 127]
+gain = [1.0, 2.853, 4.534, 5.947, 7.127]
+# The saturation after the gain, y = x / (1 + |x/c|^order)^(1/order), c in MAIN
+# units at the model's calibration (the pre-saturation tap, 2026-09-22, DIST
+# symmetry 64; calibrate.py dist fits it now).
+sat_c_pos = 0.68
+sat_c_neg = 0.72
+sat_order = 12
+main_per_side = 90.49
+# DIST symmetry away from 64, as a bias before the saturation and a gain after
+# it: y = gain * (sat(x + bias) - sat(bias)), per SYM 0, 8 .. 120 and 128 (the
+# fit at 127). Fitted on the detector's 5 ms peak metric by calibrate.py dist
+# --sym (calsym_20260924_111332: patterns 1, 2, 5 at DIST 64 and 96, c and the
+# order held). It takes the detector level's bias to zero at every SYM; the rms
+# error is 0.8 to 2.5 dB between SYM 24 and 104, 5 to 7 dB at 0 and 127, where
+# the circuit nearly gates one polarity. bias in MAIN units, gain in dB.
+# Checked on hardware (calibrate.py input --sym, calinsym_20260924_120239): the
+# detector level within 2 dB of the hardware's at every SYM at DIST 64, and
+# within about 1 dB at SYM 32 and 96 at DIST 0 too. Not at SYM near 0 and 127
+# with DIST near 0: there the hardware all but mutes (its detector level falls
+# 40 to 55 dB) and the model, fitted at DIST 64 and 96, reads 15 to 55 dB hot.
+# A gain over SYM and DIST would cover it; left, as that corner is near silent.
+sym_bias = [0.7199, 0.4966, 0.4372, 0.396, 0.352, 0.2717, 0.1695, 0.0741, 0.0, -0.0821, -0.1599, -0.2592, -0.3479, -0.4139, -0.4662, -0.5353, -0.5988]   # calibrate.py dist --sym calsym_20260925_143626, 2026-09-25
+sym_gain_db = [-8.927, -8.114, -5.625, -3.508, -1.747, -0.94, -0.026, -0.43, 0.0, -0.42, -0.571, -0.919, -1.589, -2.867, -4.825, -7.143, -9.541]   # calibrate.py dist --sym calsym_20260925_143626, 2026-09-25
+
+[sidechain]
+# Two first-order sections per SEQ, (pole, zero) in Hz, minimum phase, quantised
+# at the sample path's rate, 48 kHz / DECIM. A zero at 11760 Hz is no zero: the
+# fit's bound, just under Nyquist.
+# Fitted 2026-09-24 to the hardware's own response (calibrate.py sidechain,
+# calsc_20260924_205340): the track's filter self-oscillating, swept 35 Hz to
+# 14 kHz at each SEQ, the measured reduction taken back through the curve to the
+# level the hardware's detector saw, points under 9 kHz. The shapes fit that to
+# 0.12 (OFF), 0.18 (LPF), 0.08 (HPF) and 0.41 dB (HIT) rms. They replace sections
+# fitted to the EXT IN SEQ table (compressor-hardware.md), which had been recovered through the
+# static curve this model no longer uses: OFF read 2 dB low above 1 kHz, LPF cut
+# up to 10 dB too hard above 1 kHz, HPF passed 4 dB too much bass, HIT ran up to
+# 6 dB hot below 1 kHz.
+off = [[21.03956190345789, 81.10540124065851], [7114.411088906548, 7735.8744187210295]]
+lpf = [[44.60388328871865, 11759.917178419477], [3366.864040551719, 11759.999798635667]]
+hpf = [[458.94530838223767, 75.23146814557028], [9312.442000624185, 11759.99999999997]]
+hit = [[546.3290598167422, 158.86024807917087], [11759.99999999997, 2159.7359601482012]]
+# Each SEQ's level relative to OFF on the sweep, dB (calibrate.py sidechain --fit
+# --write sets it with the sections).
+level_db = [0.0, -8.9111, 2.2171, 2.5194]
+# Added to level_db, dB: HIT's fitted on drum suites of 24 patterns (2026-09-23),
+# whose transient top end drives the hardware harder than the sweep's steady
+# sine; fit_shift.py --suite fits it now. On those suites, against the sections above replaced: HPF 1.58 ->
+# 1.45 dB rms, HIT 1.75 -> 1.57; on the calibration suites OFF 1.59 -> 1.36, its
+# -0.71 dB bias gone.
+transient_db = [0.0, 0.0, 0.0, 1.36]
+
+[detector]
+# The peak follower's decay, seconds: a choice, not a measurement.
+tau_s = 0.005
+
+[gate]
+# No demand at or below this level, dB: 9 dB over the idle floor of the voice sum,
+# 24 dB under the lowest level the curve is fitted at.
+silence_db = -70.0
+
+[curve]
+# The static curve, fitted by fit_shift.py on the 2026-09-23 grids.
+#   GR = min(slope * width * softplus((L - knee - thr_step * (THR - 64)) / width), cap)
+# Per stored RAT 0..3, hardest first. Knees at THR 64 on the level's scale.
+thr_step_db = 0.955322265625
+cap_db = 35.875
+knee_db = [-55.8984375, -58.60546875, -64.7421875, -71.2109375]   # fit_shift.py on the grids after the 2026-09-24 sidechain refit: knees -4.91 dB
+width_db = [0.5, 0.5, 0.5, 1.8515625]
+slope = [0.7763671875, 0.738525390625, 0.6640625, 0.512451171875]   # fit_shift.py on the grids after the 2026-09-24 sidechain refit: knees -4.91 dB
+
+[ballistics]
+# ATK's nominal times, s, the device's labels. atktab is the 32-sample pole.
+atk_s = [0.00003, 0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03]
+# reltab, the release decay per block, Q16, per REL 0.1, 0.2, 0.4, 0.6, 1, 2 s, A1,
+# A2, the step rounded up so the state reaches zero. REL 0.1 s from a level-step
+# probe, 2026-09-20; the rest refitted 2026-09-25 so each REL's
+# bias on the extended suite (calsuite_20260924_101524) matches the THR 80
+# baseline's, once the step no longer stalled at small GR (up to 7.5 dB at 2 s,
+# which the earlier values, chosen by hand, had compensated for).
+reltab_q16 = [964, 317, 206, 114, 57, 21, 263, 195]   # the extended suite, the step rounded up, 2026-09-25
+# The slow-attack scale on the demand, (byte + 1) / 256, index (ATK*8 + REL)*4 + RAT,
+# generated from the coupling form: C and p per stored RAT, and each REL's
+# effective release time.
+#   s = (1 + C (0.03 ms / rel)^p) / (1 + C (atk / rel)^p)
+# RAT 2 fitted by fit_ballistics.py on the extended suite (held out: fitted on odd
+# patterns, the even ones 0.26 -> 0.16 dB rms). RAT 3's refit did not hold out and
+# is kept from 2026-09-22; RAT 0 and 1 from single-pattern ATK sweeps, and the
+# release times each from its own sweep at RAT 1:4, both 2026-09-22.
+coupling = [[0.588, 1.2406], [0.9948, 1.2406], [1.0296, 0.9205], [2.042, 0.789]]   # fit_ballistics.py on calsuite_20260924_101524, 2026-09-24
+rel_eff_s = [0.084, 0.243, 0.412, 2.017, 6.937, 6.937, 0.171, 0.345]
+# The slow-attack loss the SEQ adds beyond atkscale's, whose coupling is fitted at
+# SEQ LPF: dB off the demand, c * ATK / 6 per SEQ OFF, LPF, HPF, HIT, ATK the
+# setting 0..6, c the dB at ATK 6, whatever the REL (the verify draws,
+# 2026-09-26: at HPF and HIT the estimate read 0.53 dB deeper a step of ATK, and
+# no other setting mattered). A fixed dB, not a fraction of the demand: a
+# fraction fitted at 4-17 dB of reduction took 2 to 3 times too much at 20-35.
+# calibrate.py suite --atk-seq records it, fit_ballistics.py --seq-suite fits
+# it; LPF is 0.
+seq_atk_db = [1.56, 0.0, 2.77, 3.47]   # fit_ballistics.py --seq-suite calsuite_20260926_100114, 2026-09-26
