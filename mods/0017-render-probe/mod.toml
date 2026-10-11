@@ -6,7 +6,7 @@ title   = "Render probe: do the elemod audio-render sites carry the delay and re
 enabled = false
 
 # re-only | built | hardware-verified | retracted
-status  = "re-only"
+status  = "hardware-verified"
 
 summary = """
 A test, not a feature. Hooks the two places an elemod core would hook the audio
@@ -19,6 +19,11 @@ returns pulse on and off while the analog voices play on untouched. A pulse mean
 both sites run on the main audio path and render_out sits after the effects are
 generated and before their returns are mixed. No pulse, or a pulse in the voices,
 means the sites are not what they look like.
+
+Hardware, 2026-10-11, OS 1.73: with which=1 the delay return pulsed, and with
+which=2 the reverb return pulsed. So both sites run on the main audio path,
+0x80007C44 is the delay output and 0x80007B44 the reverb buffer. PRE versus POST
+routing was not varied.
 
 The clear only touches the returns: the delay line, the reverb state and the
 delay-to-reverb feed are all inside the effects generator, which has already run
