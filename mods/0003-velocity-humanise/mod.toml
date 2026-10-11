@@ -32,6 +32,9 @@ stub = "stub.s"
 # 3 = show 0007-cave-probe's entry counter, which is a different question: not
 # "was this written" but "was this ever entered". For promoting cave4, cave5 or
 # cave6, where a canary proves nothing because nothing writes .text.
+# 4 = count 0016-ddr-canary's fill of 0x47BE0000-0x47C00000, the candidate elemod
+# mod area: words that no longer hold address XOR 0xC0DEF00D. Built by
+# `make ddr-canary-build`.
 # Mode 1 no longer fits: its 1520 B fill needs a claim that size, and this one is
 # 0x200. It did its job - cave2 is verified as far as one session can - so widen the
 # claim by hand if it is ever needed again.

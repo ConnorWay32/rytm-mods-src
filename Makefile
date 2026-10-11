@@ -1,7 +1,7 @@
 # Analog Rytm MKII firmware mods.
 PY := .venv/bin/python
 
-.PHONY: all setup symbols layout build verify cavescan ghidra disasm clean \
+.PHONY: all setup symbols layout build verify cavescan ghidra disasm clean ddr-canary-build \
 	comp-selftest comp-cal-gen comp-cal-check comp-cal-build cave-selftest \
 	build-selftest
 
@@ -93,6 +93,14 @@ comp-cal-build: symbols layout
 	$(PY) tools/comp/calib_tables.py --check
 	$(PY) tools/build.py --tag cal --mods 0006-comp-preview --param 0006-comp-preview:cal=1
 	$(PY) tools/verify.py --tag cal
+
+# The DDR canary image: 0016 fills the candidate elemod mod area at boot and 0003's
+# diagnostic mode 4 counts the words the OS has since written (FUNC + VEL popup;
+# 0 = untouched). 0002 rides along because 0003 requires it. Flash
+# build/Analog-Rytm_MKII_OS1.73_ddrcanary.syx.
+ddr-canary-build: symbols layout
+	$(PY) tools/build.py --tag ddrcanary --mods 0000-shared 0002-euclid-accents 0003-velocity-humanise 0016-ddr-canary --param 0003-velocity-humanise:diag_canary=4
+	$(PY) tools/verify.py --tag ddrcanary
 
 # Everything under build/ is regenerated from the image except build/comp, a
 # calibration's recordings off the hardware, and build/comp_rig.json, the rig's

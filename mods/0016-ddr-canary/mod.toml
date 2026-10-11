@@ -1,0 +1,26 @@
+[mod]
+id      = "0016-ddr-canary"
+title   = "DDR canary: is the elemod mod area untouched at runtime?"
+
+# Off in the default build: this is a test image, built with `make ddr-canary-build`.
+enabled = false
+
+# re-only | built | hardware-verified | retracted
+status  = "hardware-verified"
+
+summary = """
+A test, not a feature. Fills 0x47BE0000-0x47C00000 (128 KB, the area the Digitakt
+and Digitone mk1 elemod cores load mods into) with an address-dependent pattern at
+boot, so that 0003's diagnostic mode 4 can count, while FUNC is held on the VEL
+popup, how many words of it the OS has since written. 0 after a long, hard session
+means the area is free for an Analog Rytm MKII core.
+
+The fill runs from the elemod boot site, 0x400008C0: the OS entry's third call
+(VBR := 0x40000000), before the SRAM copy, the BSS clear and anything the OS
+allocates. So it is also the first hardware run of that hook site. The pattern is
+address XOR 0xC0DEF00D, so a block the OS copied or shifted does not pass for
+untouched.
+"""
+
+[sources]
+stub = "stub.s"

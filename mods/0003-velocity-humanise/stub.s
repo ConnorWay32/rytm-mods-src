@@ -208,6 +208,18 @@ vel_get_ui:
         | the question is whether the region was touched at all, not how often.
         .if     P_DIAG_CANARY == 3
         move.l  PROBE_COUNT,%d0
+        .elseif P_DIAG_CANARY == 4
+        | Mode 4 counts 0016-ddr-canary's fill of the elemod mod area: each word
+        | should still hold its address XOR DDR_CANARY_KEY.
+        lea     DDR_CANARY,%a0
+        clr.l   %d0
+1:      move.l  %a0,%d1
+        eori.l  #DDR_CANARY_KEY,%d1
+        cmp.l   (%a0)+,%d1
+        beq.s   2f
+        addq.l  #1,%d0
+2:      cmpa.l  #DDR_CANARY_END,%a0
+        bne.s   1b
         .else
         .if     P_DIAG_CANARY == 2
         lea     CAVE3,%a0                         | the pool 0005 fills
@@ -339,6 +351,10 @@ label_rnd:
         | in separate stubs and cannot share a symbol, so this address has to match
         | 0007's .state claim in allocations.toml by hand.
         .equ    PROBE_COUNT,  0x402ccfa8
+        | Mode 4's region and pattern, which must match 0016-ddr-canary's stub.
+        .equ    DDR_CANARY,     0x47be0000
+        .equ    DDR_CANARY_END, 0x47c00000
+        .equ    DDR_CANARY_KEY, 0xc0def00d
         .if     P_DIAG_CANARY == 1
         .align  2
 canary:

@@ -735,7 +735,7 @@ owner = "0003-velocity-humanise"
 addr  = 0x402cdddc
 size  = 0x200
 gate  = "diag_canary"
-note  = "The same block, widened for any diagnostic build. Mode 1 fills the tail with a canary, mode 2 counts 0005's fill of cave3, mode 3 reads 0007's entry counter."
+note  = "The same block, widened for any diagnostic build. Mode 1 fills the tail with a canary, mode 2 counts 0005's fill of cave3, mode 3 reads 0007's entry counter, mode 4 counts 0016's fill of the elemod mod area in DDR."
 
 # trig_fire where the velocity is finalised. Six bytes are `movel %sp@(60),%d0` and
 # `addal %a2,%a3`; the stub re-emits both, offsets d0 by a random amount, rewrites
@@ -2307,3 +2307,22 @@ expect  = "3b40002a"       # movew %d0,%a5@(42)
 replace = "426d002a"       # clrw %a5@(42)
 gate    = "bit_probe"
 
+# ------------------------------------------------------------ 0016-ddr-canary
+
+# The OS entry's third call, `jsr 0x400014cc` (VBR := 0x40000000): the boot site
+# an elemod core would use, as the Digitakt and Digitone mk1 cores do at the same
+# point of the same entry routine. The stub fills 0x47BE0000-0x47C00000 with an
+# address-dependent pattern, re-emits the call and rejoins at 0x400008c6. Test
+# image only (`make ddr-canary-build`); 0003's diagnostic mode 4 reads the result.
+[[cave]]
+owner = "0016-ddr-canary"
+addr  = 0x40025c00
+size  = 0x40
+note  = "cave10, otherwise unclaimed: the boot-time fill of the elemod mod area."
+
+[[detour]]
+owner  = "0016-ddr-canary"
+addr   = 0x400008c0
+size   = 6
+expect = "4eb9400014cc"
+entry  = "ddr_canary_fill"
