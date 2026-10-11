@@ -1,7 +1,7 @@
 # Analog Rytm MKII firmware mods.
 PY := .venv/bin/python
 
-.PHONY: all setup symbols layout build verify cavescan ghidra disasm clean ddr-canary-build \
+.PHONY: all setup symbols layout build verify cavescan ghidra disasm clean ddr-canary-build render-probe-build \
 	comp-selftest comp-cal-gen comp-cal-check comp-cal-build cave-selftest \
 	build-selftest
 
@@ -101,6 +101,14 @@ comp-cal-build: symbols layout
 ddr-canary-build: symbols layout
 	$(PY) tools/build.py --tag ddrcanary --mods 0000-shared 0002-euclid-accents 0003-velocity-humanise 0016-ddr-canary --param 0003-velocity-humanise:diag_canary=4
 	$(PY) tools/verify.py --tag ddrcanary
+
+# The render probe: 0017 alone. Hooks the elemod audio-render sites and, from them,
+# silences the delay and reverb returns on alternate ~0.7 s stretches; the analog
+# voices are untouched. which=1 delay only, 2 reverb only, 3 both. Flash
+# build/Analog-Rytm_MKII_OS1.73_renderprobe.syx.
+render-probe-build: symbols layout
+	$(PY) tools/build.py --tag renderprobe --mods 0017-render-probe
+	$(PY) tools/verify.py --tag renderprobe
 
 # Everything under build/ is regenerated from the image except build/comp, a
 # calibration's recordings off the hardware, and build/comp_rig.json, the rig's

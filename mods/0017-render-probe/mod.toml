@@ -1,0 +1,35 @@
+[mod]
+id      = "0017-render-probe"
+title   = "Render probe: do the elemod audio-render sites carry the delay and reverb?"
+
+# Off in the default build: this is a test image, built with `make render-probe-build`.
+enabled = false
+
+# re-only | built | hardware-verified | retracted
+status  = "re-only"
+
+summary = """
+A test, not a feature. Hooks the two places an elemod core would hook the audio
+render: render_in, the first instruction after the audio interrupt (0x4011FAFA,
+vector 191) saves its registers, and render_out, its only exit. render_in arms a
+flag; render_out, when the flag is armed, clears the effect return buffers that the
+next block's return mixers read, on alternate stretches of 1024 blocks (about 0.7 s
+each at 32 frames per block). So with a pattern feeding the delay and reverb, the
+returns pulse on and off while the analog voices play on untouched. A pulse means
+both sites run on the main audio path and render_out sits after the effects are
+generated and before their returns are mixed. No pulse, or a pulse in the voices,
+means the sites are not what they look like.
+
+The clear only touches the returns: the delay line, the reverb state and the
+delay-to-reverb feed are all inside the effects generator, which has already run
+for the block. The tails carry on underneath and come back mid-decay.
+"""
+
+[sources]
+stub = "stub.s"
+
+[params]
+# Which return buffers render_out clears while the gate is open: 1 = delay output
+# (0x80007C44), 2 = reverb buffer (0x80007B44), 3 = both. Running 1 and 2
+# separately also confirms which buffer is which effect.
+which = 3

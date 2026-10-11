@@ -2326,3 +2326,30 @@ addr   = 0x400008c0
 size   = 6
 expect = "4eb9400014cc"
 entry  = "ddr_canary_fill"
+
+# ---------------------------------------------------------- 0017-render-probe
+
+# The two audio-render sites an elemod core for this machine would hook, as the
+# Digitakt mk1 core hooks 0x40077428 and 0x400784c8: the first instruction after
+# the audio interrupt's register save, and its only exit. render_in arms a flag;
+# render_out, when armed, clears the delay and reverb return buffers on alternate
+# 1024-block stretches. Test image only (`make render-probe-build`).
+[[cave]]
+owner = "0017-render-probe"
+addr  = 0x40025c40
+size  = 0x80
+note  = "cave10, after 0016's claim: both render stubs and the armed flag."
+
+[[detour]]
+owner  = "0017-render-probe"
+addr   = 0x4011fb02
+size   = 6
+expect = "203c7fffffff"
+entry  = "render_in_probe"
+
+[[detour]]
+owner  = "0017-render-probe"
+addr   = 0x40121656
+size   = 6
+expect = "4cee3fffff4c"
+entry  = "render_out_probe"
