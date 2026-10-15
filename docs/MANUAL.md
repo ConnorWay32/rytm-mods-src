@@ -71,11 +71,6 @@ plays at its velocity plus a random amount between -N and +N, kept within
 The amount is per track and stored with the pattern. It needs 0002, which saves
 it; the two are always built together.
 
-**Limitations**
-
-- Editing the amount may not mark the project as modified, so the device may
-  not prompt you to save. Save explicitly.
-
 ## 0004 - LFO RND
 
 A second LFO page with two random modifiers per sound. On every note trig each
@@ -123,7 +118,6 @@ pool. Sounds made before the mod read the first destination at depth 0.
 - A destination is stored as a machine slot. After a machine change it points at
   the same slot on the new machine; where that slot is empty the knob reads `--`
   and the empty slot does not appear in the list.
-- Edits may not mark the project as modified. Save explicitly.
 
 ## 0006 - Compressor preview
 
@@ -347,6 +341,9 @@ the kit, and survive a power cycle with or without a kit save, as other kit
 edits do. A sound that has never had them set
 reads TYP OFF, FRQ 127, RES 0, DEP FULL, ATK 0, SUS 0, POL +.
 
+Hold TRK while turning any of these knobs to change it on every voice track,
+as 0014 does for stock's parameters.
+
 **Known limits**
 
 - None of these settings can be p-locked, and they have no MIDI CC.
@@ -375,15 +372,23 @@ between them are kept: a track at 40 and one at 70 both go up by 10. Each track
 stops at its own limits. The screen shows the selected track as usual.
 
 On the SYNTH page the knob changes the same position on every track, whatever
-machine each one has, limited to the range of the selected track's machine.
+machine each one has, within each machine's own range. A track whose machine
+has no parameter in that position is left alone.
+
+FILTER TYP is the exception: the selected track's type changes as usual and
+every other track is set to the same type.
 
 The turn changes the selected track only, as stock:
 
 - with the FX track selected;
 - while a trig key is held, so parameter locks stay on the selected track;
 - for LFO DST, and for the parameters other mods add: the euclidean OP beyond
-  SUB (0002), VEL's humanise amount (0003), the LFO RND page (0004) and the
-  DAC FILTER page (0013).
+  SUB (0002), VEL's humanise amount (0003) and the LFO RND page (0004).
+
+The DAC FILTER page (0013) works the same way: every voice track moves by the
+same step, each within its own limits. TYP and POL are set the same on every
+track: the type the selected track reaches, and the same polarity. FUNC + TRK + turn on ATK or SUS moves each track to its own next
+stop of -64, 0 and +63.
 
 The changes are ordinary edits: saved with the kit, undone by reloading it.
 

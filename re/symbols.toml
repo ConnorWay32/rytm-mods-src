@@ -721,6 +721,12 @@ sig = "int(int paramId)"
 status = "verified"
 note = "Returns the ROM parameter record's +0x04 - the index within its own container (sound, trig, ...). Not a global index: VEL (trig) and LFO MUL (sound) both return 1."
 
+[fn.param_is_machine]
+addr = 0x40006f18
+sig = "bool(int paramId)"
+status = "verified"
+note = "Whether the ROM parameter record's kind (+0x00) is 0..52, a machine's own parameter. SoundParameterSet's write (0x400a9d7e) then compares the record's machine (0x4000714a) with the live sound's +0x68 and returns without writing when they differ."
+
 [fn.sound_randomize]
 addr = 0x400bc5f2
 sig = "void(TrackPattern *this)"

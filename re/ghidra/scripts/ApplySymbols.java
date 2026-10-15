@@ -20,6 +20,7 @@ public class ApplySymbols extends GhidraScript {
         name(0x4000076aL, "fpga_status_bit5", true);
         name(0x40006cd8L, "param_tables_build", true);
         name(0x40006ea8L, "param_container_index", true);
+        name(0x40006f18L, "param_is_machine", true);
         name(0x40007028L, "sound_param_id_for_index", true);
         name(0x400070e6L, "machine_available", true);
         name(0x40007116L, "machine_home_track", true);
@@ -274,6 +275,6 @@ public class ApplySymbols extends GhidraScript {
         name(0x8000fbbcL, "fx_return_route_flag_delay", false);
         name(0x8000fef4L, "fx_mix_ring_slot", false);
         name(0x8000fef8L, "voice_machine_state", false);
-        println("applied 257 symbols");
+        println("applied 258 symbols");
     }
 }

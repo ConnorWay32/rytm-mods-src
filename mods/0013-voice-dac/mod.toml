@@ -83,6 +83,16 @@ on captured voices first, and the device's integer code emulated against that
 model within 0.1 dB. Its knobs reuse ids 7 and 14 (Error records) and 457 (CB
 TEST's CB_OSC_SELECT, a hidden machine's, which stock never shows), renamed.
 
+With ctrl_all, TRK + turn with no trig key held applies a knob's step to every
+voice track, as 0014 does for stock's parameters: 0014's gate comes after this
+one in param_apply_delta and never sees these ids. TYP, as stock's FILTER TYP
+under 0014, is not stepped on every track: the selected track takes the turn and
+every voice track is set to the type it reached. The step runs once a track,
+ca_track naming it to the lookups in flt_cur, flt_set, shp_delta and shp_set;
+TYP's fraction is summed once a turn, and each track starts from the same FUNC
+snap sum, so each snaps to its own next stop. Each track's write sends its own
+change notice.
+
 The values are kept in the live sound's spare bytes, untagged: TYP in +0x6d
 bits 0-2, FRQ and DEP xor 0x7f in +0x6e/+0x6f, RES in velocity route 0's spare
 byte (below), so all zero is TYP OFF, FRQ 127, DEP FULL, RES 0; POL in +0x6d
@@ -232,6 +242,12 @@ k = 11190
 # has added up to this many steps one way (8.8 deltas, as the knob reports
 # them); a snap on every event was far too sensitive (2026-10-06).
 snap = 4
+# 1 = CTRL ALL on the DAC FILTER page: TRK + turn (no trig key held) applies the
+# step to every voice track, each from its own value, as 0014 does for stock's
+# parameters, whose gate never sees these ids; TYP sets every track to the type
+# the selected track reaches. FUNC + TRK + turn on ATK or SUS
+# snaps each track to its own next stop. 0 keeps every turn on the selected track.
+ctrl_all = 1
 # 1 draws ATK's and SUS's knobs as SAMPLE FINE's - dotted at 0, solid
 # elsewhere - by copying FINE's draw callback (RAM record +0x24, the style-8
 # dial template 0x419a45f8) into theirs each idle tick. A kit saved while the
@@ -278,4 +294,5 @@ dbg = 0
 shared = true
 symbols = ["mem_new", "std_string_from_cstr", "std_string_dtor", "text_draw",
            "project_singleton", "track_index_of", "text_font", "text_ctx",
-           "str_fmt_s", "str_width_xxx", "kit_track_sound"]
+           "str_fmt_s", "str_width_xxx", "kit_track_sound", "is_key_held",
+           "KEY_TRK"]

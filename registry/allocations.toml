@@ -2247,6 +2247,13 @@ addr  = 0x40029838
 size  = 0xac
 note  = "cave13: the gate that runs a knob turn over every sound track while TRK is held."
 
+[[cave]]
+owner   = "0014-ctrl-all"
+addr    = 0x40029950
+size    = 0x140
+section = ".typ"
+note    = "cave13, after 0015, to its end: the per-track loop with each machine's id for a SYNTH slot, and FILTER TYP under TRK - the selected track's turn, then every other sound track set to the type it reached."
+
 # param_apply_delta after the track lookup, where 0013's hpf_delta rejoins: `moveal
 # %a2@,%a0; pea -1`, exactly six bytes, both re-emitted, rejoining at 0x400378c8.
 # The last gate in the chain 0002, 0003, 0004, 0013, so the ids those take stay

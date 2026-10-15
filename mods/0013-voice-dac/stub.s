@@ -235,6 +235,7 @@
         .equ    VT_CONFIG_CHANGED, 16             | and its change notice
         .equ    SOUND_CONFIG_CHANGED, 0x401cb5dc  | SoundConfigChangedInfo's vtable
         .equ    VOICE_TRACKS,   12
+        .equ    TRIG_KEYS,      16                | key ids 0..15, as 0014
         .equ    PROJ_TRACKSEL,  48                | as 0000-shared's
         .equ    VIEW_INVALIDATE, 0x40078514
         .equ    PAGE_DEFAULT,   0x401ec570        | page_info's answer above 11
@@ -950,7 +951,7 @@ flt_put7:
 
         .align  2
 flt_cur:
-        jsr     shared_cur_sound
+        jsr     ca_sound
         bne.s   flt_entry
         move.l  #FLT_DEFAULT,%d0
         rts
@@ -993,7 +994,10 @@ flt_set:
         pea     PROJ_TRACKSEL(%a0)
         jsr     track_index_of
         addq.l  #4,%sp
-        moveq   #VOICE_TRACKS,%d1
+        move.l  ca_track,%d1
+        bmi.s   20f
+        move.l  %d1,%d0                           | CTRL ALL's track
+20:     moveq   #VOICE_TRACKS,%d1
         cmp.l   %d1,%d0
         bcc.w   9f                                | the FX track has no voice
         lea     hpf_track,%a0
@@ -2453,7 +2457,57 @@ hpf_delta:
 4:      asr.l   #8,%d2                            | whole steps, sign preserved
 8:      tst.l   %d2
         beq.w   7f
-        move.l  24(%sp),%d1
+        move.l  24(%sp),%d0                       | the id
+        move.l  %d2,%d1                           | the steps
+        moveq   #ID_TYP,%d3
+        cmp.l   %d0,%d3
+        bne.s   11f
+        jsr     flt_step                          | TYP: the selected track's turn,
+        jsr     flt_cur                           | then every track to its type
+        moveq   #24,%d1
+        lsr.l   %d1,%d0
+        and.l   #0xff,%d0
+        move.l  %d0,%d1
+        moveq   #ID_TYP,%d0
+        lea     flt_to,%a1
+        jsr     ca_each
+        bra.s   12f
+11:     lea     flt_step,%a1
+        jsr     ca_each
+12:     move.l  %a2,-(%sp)
+        jsr     VIEW_INVALIDATE
+        addq.l  #4,%sp
+7:      addq.l  #4,%sp                            | the pushed argument
+        movem.l (%sp),%d2-%d3/%a2                 | param_apply_delta's epilogue
+        lea     12(%sp),%sp
+        rts
+10:     move.l  24(%sp),%d0
+        jsr     shp_ours
+        bne.s   9f
+        move.l  24(%sp),%d0
+        move.l  28(%sp),%d1
+        move.l  32(%sp),%d2
+        and.l   #0xff,%d2                         | funcHeld
+        lea     shp_delta,%a1
+        jsr     ca_each
+        move.l  %a2,-(%sp)
+        jsr     VIEW_INVALIDATE
+        addq.l  #4,%sp
+        bra.w   7b
+9:      jsr     DELTA_CALL                        | displaced
+        jmp     DELTA_RESUME
+
+        | ------------------------------------------------------------------
+        | flt_step(d0 = id, d1 = whole steps): the field moved by the steps,
+        | clamped to 0..7 for TYP and 0..127 for the rest, and set, on the
+        | track flt_cur and flt_set work on. Clobbers d0/d1/a0/a1.
+        | ------------------------------------------------------------------
+        .align  2
+flt_step:
+        lea     -8(%sp),%sp
+        movem.l %d2-%d3,(%sp)
+        move.l  %d1,%d2                           | the steps
+        move.l  %d0,%d1
         jsr     flt_shift
         move.l  %d1,%d3
         jsr     flt_cur
@@ -2478,27 +2532,116 @@ hpf_delta:
         and.l   %d1,%d2
         or.l    %d2,%d0
         jsr     flt_set
-        move.l  %a2,-(%sp)
-        jsr     VIEW_INVALIDATE
-        addq.l  #4,%sp
-7:      addq.l  #4,%sp                            | the pushed argument
-        movem.l (%sp),%d2-%d3/%a2                 | param_apply_delta's epilogue
-        lea     12(%sp),%sp
+        movem.l (%sp),%d2-%d3
+        lea     8(%sp),%sp
         rts
-10:     move.l  24(%sp),%d0
-        jsr     shp_ours
-        bne.s   9f
-        move.l  24(%sp),%d0
-        move.l  28(%sp),%d1
-        move.l  32(%sp),%d2
-        and.l   #0xff,%d2                         | funcHeld
-        jsr     shp_delta
-        move.l  %a2,-(%sp)
-        jsr     VIEW_INVALIDATE
+
+        | flt_to(d0 = id, d1 = value): the field set to the value, through
+        | flt_step; nothing when it holds it already. Clobbers d0/d1/a0/a1.
+        .align  2
+flt_to:
+        lea     -8(%sp),%sp
+        movem.l %d2-%d3,(%sp)
+        move.l  %d0,%d3                           | the id
+        move.l  %d1,%d2                           | the value
+        jsr     flt_cur
+        move.l  %d3,%d1
+        jsr     flt_shift                         | keeps d0
+        lsr.l   %d1,%d0
+        and.l   #0xff,%d0
+        move.l  %d2,%d1
+        sub.l   %d0,%d1                           | the steps there
+        move.l  %d3,%d0
+        movem.l (%sp),%d2-%d3
+        lea     8(%sp),%sp
+        tst.l   %d1
+        beq.s   9f
+        jmp     flt_step
+9:      rts
+
+        | ------------------------------------------------------------------
+        | CTRL ALL on the DAC FILTER page, as 0014 gives stock's parameters:
+        | TRK held, and no trig key, applies a knob's step to every voice
+        | track, each from its own value.
+        |   ca_sound() -> d0 = a0 = the live sound of ca_track's track, or the
+        |                selected track's while ca_track is -1; flags from d0,
+        |                as shared_cur_sound.
+        |   ca_on() -> d0 nonzero for CTRL ALL.
+        | TYP is the exception: the selected track takes the turn and every
+        | voice track is set to the type it reached (flt_to).
+        |   ca_each(a1 = routine, d0/d1/d2 its arguments): the routine once,
+        |                or with CTRL ALL once for each voice track, ca_track
+        |                naming it. Each call starts from the same FUNC snap
+        |                sum, so each track snaps to its own next stop.
+        | All three clobber d0/d1/a0/a1.
+        | ------------------------------------------------------------------
+        .align  2
+ca_sound:
+        move.l  ca_track,%d0
+        bmi.s   1f
+        jmp     shared_sound_of
+1:      jmp     shared_cur_sound
+
+        .align  2
+ca_on:
+        .if     P_CTRL_ALL
+        move.l  %d2,-(%sp)
+        pea     KEY_TRK
+        jsr     is_key_held
         addq.l  #4,%sp
-        bra.w   7b
-9:      jsr     DELTA_CALL                        | displaced
-        jmp     DELTA_RESUME
+        tst.l   %d0
+        beq.s   9f
+        moveq   #TRIG_KEYS-1,%d2
+1:      move.l  %d2,-(%sp)
+        jsr     is_key_held
+        addq.l  #4,%sp
+        tst.l   %d0
+        bne.s   8f                                | a trig is held
+        subq.l  #1,%d2
+        bpl.s   1b
+        moveq   #1,%d0
+        bra.s   9f
+8:      moveq   #0,%d0
+9:      move.l  (%sp)+,%d2
+        .else
+        moveq   #0,%d0
+        .endif
+        rts
+
+        .align  2
+ca_each:
+        lea     -24(%sp),%sp
+        movem.l %d2-%d6/%a2,(%sp)
+        move.l  %d0,%d3
+        move.l  %d1,%d4
+        move.l  %d2,%d5
+        move.l  %a1,%a2
+        jsr     ca_on
+        tst.l   %d0
+        bne.s   2f
+        move.l  %d3,%d0                           | the selected track alone
+        move.l  %d4,%d1
+        move.l  %d5,%d2
+        jsr     (%a2)
+        bra.s   9f
+2:      move.l  shp_snap_acc,%d6
+        clr.l   ca_track
+1:      move.l  %d6,shp_snap_acc
+        move.l  %d3,%d0
+        move.l  %d4,%d1
+        move.l  %d5,%d2
+        jsr     (%a2)
+        move.l  ca_track,%d0
+        addq.l  #1,%d0
+        move.l  %d0,ca_track
+        moveq   #VOICE_TRACKS,%d1
+        cmp.l   %d1,%d0
+        blt.s   1b
+        moveq   #-1,%d0
+        move.l  %d0,ca_track
+9:      movem.l (%sp),%d2-%d6/%a2
+        lea     24(%sp),%sp
+        rts
 
         | ------------------------------------------------------------------
         | param_value_text for ids 5, 11 and 12, the popups: over `movel
@@ -2781,6 +2924,8 @@ flt_knobs:
         rts
 flt_typ_acc:
         .long   0
+ca_track:                                         | CTRL ALL's track, or -1
+        .long   -1
 shp_snap_acc:                                     | FUNC + turn's sum, 8.8
         .long   0
 shp_snap_id:                                      | and the knob it is for
@@ -2895,7 +3040,7 @@ shp_delta:
         movem.l %d3-%d4,(%sp)
         move.l  %d0,%d3                           | the id
         move.l  %d1,%d4                           | the delta
-        jsr     shared_cur_sound
+        jsr     ca_sound
         tst.l   %d0
         beq.w   9f
         move.l  %d3,%d0
@@ -2977,7 +3122,10 @@ shp_set:
         pea     PROJ_TRACKSEL(%a0)
         jsr     track_index_of
         addq.l  #4,%sp
-        moveq   #VOICE_TRACKS,%d1
+        move.l  ca_track,%d1
+        bmi.s   20f
+        move.l  %d1,%d0                           | CTRL ALL's track
+20:     moveq   #VOICE_TRACKS,%d1
         cmp.l   %d1,%d0
         bcc.w   9f                                | the FX track has no voice
         move.l  %d0,%d3                           | the track

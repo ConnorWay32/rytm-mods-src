@@ -13,15 +13,19 @@ status  = "hardware-verified"
 summary = """
 Holding TRK while turning a knob on a sound or TRIG page applies the same step to
 that parameter on tracks 1..12, so their differences are kept. A SYNTH knob applies
-by position: each track gets the step on the same machine slot, clamped to the
-selected machine's range. Stock handles the turn alone - one track, as before -
-with the FX track selected, with any trig key held, and on any page whose set is
-not a sound or trig set.
+by position: each track takes its own machine's id for the same slot
+(sound_param_id_for_index), within that id's range, and a track whose machine
+has none there is skipped. Stock's write drops an id of another machine. FILTER TYP is the exception: the selected track takes
+the turn and every other track is set to the type it reached. Stock handles the
+turn alone - one track, as before - with the FX track selected, with any trig
+key held, and on any page whose set is not a sound or trig set.
 
 A detour at the end of param_apply_delta's gate chain, after 0002, 0003, 0004 and
-0013, so parameters those mods handle stay single-track. Each track's set comes
-from the page's own getter and each write goes through its own delta handler, so
-storage and the display see ordinary edits.
+0013, so parameters those mods handle stay with them: 0013 applies the same
+gesture to its DAC FILTER page itself, the others stay single-track. Each
+track's set comes from the page's own getter and each write goes through its own
+delta handler, or for TYP through param_set_value, so storage and the display
+see ordinary edits.
 """
 
 [sources]
@@ -35,4 +39,8 @@ symbols = [
   "SOUND_PARAM_SET_VT",
   "TRIG_PARAM_SET_VT",
   "param_apply_delta_dispatch_resume",
+  "param_set_value",
+  "param_is_machine",
+  "param_container_index",
+  "sound_param_id_for_index",
 ]

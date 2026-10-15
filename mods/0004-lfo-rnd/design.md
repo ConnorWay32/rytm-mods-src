@@ -69,8 +69,6 @@ entry with no mapping of our own.
   Fix: fill the table from the kit's sounds at kit load, or read it in the audio
   hook's redraw.
 - **Sound locks.** A step that plays a pool sound still uses the kit sound's settings.
-- **Project not marked modified.** Editing writes the live sound directly, so the
-  project may not prompt to save. The same applies to 0003's amount.
 - **Dial range.** The shared knob draw callback's range source is not traced. Worst
   case the dial does not span its full ring; values and popups are correct.
 
